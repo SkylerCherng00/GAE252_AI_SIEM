@@ -468,12 +468,10 @@ async def search_similar_documents(query: SearchQuery = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error searching similar documents: {str(e)}")
 
-### Error ###
 @app.post("/qdrant/document/upload", tags=["Document Processing"])
 async def process_document(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    force_recreate: bool = False,
+    force_recreate: bool = True,
 ):
     """
     Upload and process a document, storing its embeddings in Qdrant.
@@ -490,10 +488,6 @@ async def process_document(
         ```json
         {
             "success": true,
-            "message": "Document scheduled for processing",
-            "filename": "user_manual.pdf",
-            "collection_name": "user_manual",
-            "task_id": "1234-5678-90ab-cdef",
             "file_path": "docs/user_manual.pdf"
         }
         ```
@@ -506,7 +500,6 @@ async def process_document(
         curl -X POST "http://localhost:8000/qdrant/process/document" \\
             -F "file=@/path/to/document.pdf" \\
             -F "force_recreate=false" \\
-            -F "custom_collection_name=my_custom_collection"
         ```
     """
     dm = get_document_manager()
@@ -530,12 +523,10 @@ async def process_document(
         file_path = docs_dir / file.filename
         
         # Embed and save the vector
-        dm.process_document(file_path=file_path, force_recreate=True)       
+        dm.process_document(file_path=file_path, force_recreate=force_recreate)       
 
         return {
             "success": True,
-            "message": "Uploaded document successfully",
-            "filename": file.filename,
             "file_path": str(file_path)
         }
     except Exception as e:
