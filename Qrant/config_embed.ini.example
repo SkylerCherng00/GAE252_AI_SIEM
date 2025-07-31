@@ -17,8 +17,8 @@ api_key =
 model_name = models/embedding-001
 
 [QDRANT]
-url = https://eeaa6571-6f65-4174-a647-9091668bb8c0.us-west-1-0.aws.cloud.qdrant.io:6333
-api_key = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.zKQxF3334H9E1hTTVzF6dswkhbidLplT9WyNMlvkm_8
+url = 
+api_key = 
 
 [CHUNKING]
 chunk_size = 800
@@ -26,4 +26,3 @@ chunk_overlap = 400
 
 [PROCESSING]
 src_directory = src
-force_recreate = false

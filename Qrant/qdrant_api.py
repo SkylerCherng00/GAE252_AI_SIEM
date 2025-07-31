@@ -8,7 +8,7 @@ import uvicorn
 from datetime import datetime
 
 # Import QdrantDocumentManager from embed_documents module
-from qdrant_embed_doc import QdrantDocumentManager
+from SidePrj.GAE252_AI_SIEM.Qrant.qdrant_embed import QdrantDocumentManager
 
 # Change the working directory to the project root
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
