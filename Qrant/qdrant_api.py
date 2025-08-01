@@ -6,12 +6,14 @@ import os
 from pathlib import Path
 import uvicorn
 from datetime import datetime
-
-# Import QdrantDocumentManager from embed_documents module
-from SidePrj.GAE252_AI_SIEM.Qrant.qdrant_embed import QdrantDocumentManager
+import shutil
 
 # Change the working directory to the project root
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+# Import QdrantDocManager from embed_documents module
+from qdrant_embed import QdrantDocManager
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -38,25 +40,20 @@ class EmbeddingProviderConfig(BaseModel):
     provider: str = Field(description="Embedding provider ('ollama', 'azure', or 'gemini')")
     config_override: Optional[Dict[str, Any]] = Field(default=None, description="Configuration overrides for the provider")
 
-class SearchQuery(BaseModel):
-    query: str = Field(description="The query text to search for")
-    collection_name: str = Field(description="The collection to search in")
-    k: int = Field(default=3, description="Number of results to return")
-
 class ProcessDocumentRequest(BaseModel):
     collection_name: Optional[str] = Field(default=None, description="Optional custom collection name")
     force_recreate: bool = Field(default=False, description="Whether to recreate the collection if it exists")
 
-# Global QdrantDocumentManager instance
+# Global QdrantDocManager instance
 document_manager = None
 
 def get_document_manager():
     """
-    Lazy initialization of the QdrantDocumentManager
+    Lazy initialization of the QdrantDocManager
     """
     global document_manager
     if document_manager is None:
-        document_manager = QdrantDocumentManager()
+        document_manager = QdrantDocManager()
     return document_manager
 
 
@@ -157,7 +154,7 @@ async def update_embedding_provider(
     Example CURL:
         ```bash
         # Update to Azure provider
-        curl -X POST "http://localhost:8000/embedding/provider" \\
+        curl -X POST "http://localhost:8000/qdrant/embedding/provider" \\
             -H "Content-Type: application/json" \\
             -d '{
                 "provider": "azure",
@@ -169,7 +166,7 @@ async def update_embedding_provider(
             }'
             
         # Update to Ollama provider
-        curl -X POST "http://localhost:8000/embedding/provider" \\
+        curl -X POST "http://localhost:8000/qdrant/embedding/provider" \\
             -H "Content-Type: application/json" \\
             -d '{
                 "provider": "ollama"
@@ -404,70 +401,6 @@ async def get_point_details(collection_name: str, point_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting point details: {str(e)}")
 
-@app.post("/qdrant/search/similar", tags=["Search"])
-async def search_similar_documents(query: SearchQuery = Body(...)):
-    """
-    Search for documents similar to the query in the specified collection.
-    
-    Args:
-        query (SearchQuery): Search parameters
-    
-    Returns:
-        dict: Search results with similarity scores
-        
-    Example Return:
-        ```json
-        {
-            "results": [
-                {
-                    "id": "point_123",
-                    "score": 0.89,
-                    "payload": {
-                        "page_content": "This is the most similar document content...",
-                        "filename": "document1.pdf",
-                        "source": "/path/to/document1.pdf"
-                    },
-                    "metadata": {
-                        "filename": "document1.pdf",
-                        "similarity_score": 0.89
-                    }
-                },
-                {...}
-            ],
-            "count": 3
-        }
-        ```
-        
-    Raises:
-        HTTPException: If the collection doesn't exist
-        
-    Example CURL:
-        ```bash
-        curl -X POST "http://localhost:8000/qdrant/search/similar" \\
-            -H "Content-Type: application/json" \\
-            -d '{
-                "query": "How do I configure the system?",
-                "collection_name": "user_manual",
-                "k": 5
-            }'
-        ```
-    """
-    dm = get_document_manager()
-    
-    try:
-        results = dm.search_similar(
-            query=query.query,
-            collection_name=query.collection_name,
-            k=query.k
-        )
-        
-        return {
-            "results": results,
-            "count": len(results)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error searching similar documents: {str(e)}")
-
 @app.post("/qdrant/document/upload", tags=["Document Processing"])
 async def process_document(
     file: UploadFile = File(...),
@@ -479,7 +412,6 @@ async def process_document(
     Args:
         file (UploadFile): The document file to process
         force_recreate (bool): Whether to recreate the collection if it exists
-        custom_collection_name (str, optional): Custom name for the collection
     
     Returns:
         dict: Processing status and collection information
@@ -497,9 +429,9 @@ async def process_document(
         
     Example CURL:
         ```bash
-        curl -X POST "http://localhost:8000/qdrant/process/document" \\
-            -F "file=@/path/to/document.pdf" \\
-            -F "force_recreate=false" \\
+        curl -X POST "http://localhost:8000/qdrant/document/upload" \
+            -F "file=@/path/to/document.pdf" \
+            -F "force_recreate=false" \
         ```
     """
     dm = get_document_manager()
@@ -521,16 +453,23 @@ async def process_document(
         
         # Save file to docs directory
         file_path = docs_dir / file.filename
+        print(f"Saving file to: {file_path}")
         
-        # Embed and save the vector
-        dm.process_document(file_path=file_path, force_recreate=force_recreate)       
+        # The crucial step: write the contents of the UploadFile to the new file
+        # Using a sync operation with a thread pool to avoid blocking the event loop
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Now that the file is saved, you can process it.
+        dm.process_document(file_path=file_path, force_recreate=force_recreate)      
 
         return {
             "success": True,
             "file_path": str(file_path)
         }
     except Exception as e:
-
+        # Catch and handle exceptions, making sure to include the original error message
+        # for better debugging.
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
 
 def _list_directory_files(dir_path):
@@ -558,18 +497,21 @@ def _list_directory_files(dir_path):
     
     return files
 
-
-@app.get("/qdrant/list/docs", tags=["File Management"])
-async def list_docs():
+@app.get("/qdrant/list/files", tags=["File Management"])
+async def list_files(directory: str = Query(default="docs", enum=["src", "docs"])):
     """
-    List all files in the docs directory.
+    List all files in the specified directory (either 'src' or 'docs').
+    
+    Args:
+        directory (str): The directory to list files from. Must be either 'src' or 'docs'.
     
     Returns:
-        dict: List of files in the docs directory
+        dict: List of files in the specified directory
         
     Example Return:
         ```json
         {
+            "directory": "docs",
             "files": [
                 {
                     "name": "document1.pdf",
@@ -590,124 +532,27 @@ async def list_docs():
         
     Example CURL:
         ```bash
-        curl -X GET "http://localhost:8000/list/docs"
+        curl -X GET "http://localhost:8000/qdrant/list/files?directory=docs"
+        curl -X GET "http://localhost:8000/qdrant/list/files?directory=src"
         ```
     """
     try:
-        docs_dir = Path("docs")
-        files = _list_directory_files(docs_dir)
+        # Validate directory parameter
+        if directory not in ["src", "docs"]:
+            raise HTTPException(status_code=400, detail="Directory parameter must be either 'src' or 'docs'")
         
-        return {
-            "files": files,
-            "count": len(files)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
-
-
-@app.get("/qdrant/list/src", tags=["File Management"])
-async def list_src():
-    """
-    List all files in the src directory.
-    
-    Returns:
-        dict: List of files in the src directory
-        
-    Example Return:
-        ```json
-        {
-            "files": [
-                {
-                    "name": "module1.py",
-                    "path": "src/module1.py",
-                    "size_bytes": 4321,
-                    "last_modified": "2023-06-15T09:45:20"
-                },
-                {
-                    "name": "module2.py",
-                    "path": "src/module2.py",
-                    "size_bytes": 8765,
-                    "last_modified": "2023-06-18T16:10:05"
-                }
-            ],
-            "count": 2
-        }
-        ```
-        
-    Example CURL:
-        ```bash
-        curl -X GET "http://localhost:8000/list/src"
-        ```
-    """
-    try:
-        src_dir = Path("src")
-        files = _list_directory_files(src_dir)
-        
-        return {
-            "files": files,
-            "count": len(files)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
-
-
-@app.get("/list/directory", tags=["File Management"])
-async def list_directory(directory: str = Query(..., description="Path to directory to list")):
-    """
-    List all files in a specified directory.
-    
-    Args:
-        directory (str): Path to the directory to list
-    
-    Returns:
-        dict: List of files in the specified directory
-        
-    Example Return:
-        ```json
-        {
-            "directory": "/path/to/directory",
-            "files": [
-                {
-                    "name": "file1.txt",
-                    "path": "/path/to/directory/file1.txt",
-                    "size_bytes": 12345,
-                    "last_modified": "2023-07-01T10:30:45"
-                },
-                {
-                    "name": "file2.pdf",
-                    "path": "/path/to/directory/file2.pdf",
-                    "size_bytes": 5678,
-                    "last_modified": "2023-07-02T14:20:30"
-                }
-            ],
-            "count": 2
-        }
-        ```
-        
-    Example CURL:
-        ```bash
-        curl -X GET "http://localhost:8000/list/directory?directory=/path/to/directory"
-        ```
-    """
-    dir_path = Path(directory)
-    
-    if not dir_path.exists():
-        raise HTTPException(status_code=404, detail=f"Directory not found: {directory}")
-    
-    if not dir_path.is_dir():
-        raise HTTPException(status_code=400, detail=f"Path is not a directory: {directory}")
-    
-    try:
+        dir_path = Path(directory)
         files = _list_directory_files(dir_path)
         
         return {
-            "directory": str(dir_path),
+            "directory": directory,
             "files": files,
             "count": len(files)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -18,6 +18,8 @@ Configuration is read from config_qdrant_document_manager.ini file
 
 import os
 import configparser
+import requests
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -62,38 +64,73 @@ class QdrantDocManager:
         text_splitter (RecursiveCharacterTextSplitter): Splitter for document chunking
     """
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, config_url: str = None):
         """
         Initialize the QdrantDocManager with configuration.
         
         Args:
             config_path (str, optional): Path to the configuration file.
                 If None, uses default path in the same directory.
+            config_url (str, optional): URL to fetch configuration from.
+                If provided, fetches configuration from URL instead of file.
         """
-        # Load configuration
-        if config_path is None:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            config_path = os.path.join(current_dir, 'config_embed.ini')
-        
         self.config = configparser.ConfigParser()
-        self.config.read(config_path)
+        
+        # Try to fetch config from HTTP endpoint first if URL is provided or using default
+        if config_url is None:
+            config_url = "http://localhost:8001/config/config_embed"
+            
+        try:
+            # Fetch configuration from HTTP endpoint
+            response = requests.get(config_url, timeout=5)
+            if response.status_code == 200:
+                config_data = response.json()
+                print(f"✅ Configuration loaded from API: {config_url}")
+                
+                # Convert JSON config to ConfigParser format
+                for section, options in config_data.get("configs", {}).items():
+                    if not self.config.has_section(section):
+                        self.config.add_section(section)
+                    for option, value in options.items():
+                        self.config.set(section, option, str(value))
+            else:
+                print(f"❌ Failed to fetch configuration from API: {response.status_code}")
+                self._load_from_file(config_path)
+        except Exception as e:
+            print(f"❌ Error fetching configuration from API: {e}")
+            print("Falling back to local configuration file...")
+            self._load_from_file(config_path)
         
         # Set up instance properties from config
         self.embedding_provider = self.config.get('GENERAL', 'embedding_provider', fallback='ollama')
         self.qdrant_url = self.config.get('QDRANT', 'url', fallback='http://localhost:6333')
         self.qdrant_api_key = self.config.get('QDRANT', 'api_key', fallback='')
-        self.chunk_size = self.config.getint('CHUNKING', 'chunk_size', fallback=1000)
+        self.chunk_size = self.config.getint('CHUNKING', 'chunk_size', fallback=400)
         self.chunk_overlap = self.config.getint('CHUNKING', 'chunk_overlap', fallback=200)
+    
+    def _load_from_file(self, config_path: str = None):
+        """
+        Load configuration from a local file.
+        
+        Args:
+            config_path (str, optional): Path to the configuration file.
+                If None, uses default path in the same directory.
+        """
+        if config_path is None:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            config_path = os.path.join(current_dir, 'config_embed.ini')
+        
+        print(f"📄 Loading configuration from file: {config_path}")
+        self.config.read(config_path)
         
         # Initialize embeddings model based on provider
         self.embeddings = self._initialize_embeddings()
         
         # Initialize Qdrant client
-        print(self.qdrant_url)
         if self.qdrant_api_key:
-            self.client = QdrantClient(self.qdrant_url, api_key=self.qdrant_api_key)
+            self.qdrant_client = QdrantClient(self.qdrant_url, api_key=self.qdrant_api_key)
         else:
-            self.client = QdrantClient(self.qdrant_url)
+            self.qdrant_client = QdrantClient(self.qdrant_url)
         
         # Text splitter for chunking documents
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -125,7 +162,6 @@ class QdrantDocManager:
         """
         if not provider:
             provider = self.embedding_provider
-        print(provider)
             
         if provider == "ollama":
             # Initialize Ollama embeddings
@@ -174,7 +210,8 @@ class QdrantDocManager:
                 print(f"🔄 Initializing Google Gemini embeddings with model: {gemini_model_name}")
                 return GoogleGenerativeAIEmbeddings(
                     model=gemini_model_name,
-                    google_api_key=gemini_api_key
+                    google_api_key=gemini_api_key,
+                    output_dimensionality=self.config.getint("GEMINI", "output_dimensionality", fallback=768)
                 )
             except (ImportError, ModuleNotFoundError):
                 raise ImportError("Google Gemini embeddings require 'langchain_google_genai' package. Install with 'pip install langchain_google_genai'")
@@ -235,7 +272,7 @@ class QdrantDocManager:
             bool: True if the collection exists, False otherwise
         """
         try:
-            return self.client.collection_exists(collection_name=collection_name)
+            return self.qdrant_client.collection_exists(collection_name=collection_name)
         except Exception as e:
             print(f"Error checking if collection exists: {e}")
             return False
@@ -248,7 +285,7 @@ class QdrantDocManager:
             list: List of collection names
         """
         try:
-            collections = self.client.get_collections()
+            collections = self.qdrant_client.get_collections()
             collection_names = [collection.name for collection in collections.collections]
             print(f"Found {len(collection_names)} collections: {collection_names}")
             return collection_names
@@ -271,7 +308,7 @@ class QdrantDocManager:
                 print(f"Collection '{collection_name}' does not exist")
                 return False
             
-            self.client.delete_collection(collection_name=collection_name)
+            self.qdrant_client.delete_collection(collection_name=collection_name)
             print(f"Successfully deleted collection: {collection_name}")
             return True
         except Exception as e:
@@ -298,9 +335,9 @@ class QdrantDocManager:
             
             # Create new client with updated settings
             if self.qdrant_api_key:
-                self.client = QdrantClient(url=self.qdrant_url, api_key=self.qdrant_api_key)
+                self.qdrant_client = QdrantClient(url=self.qdrant_url, api_key=self.qdrant_api_key)
             else:
-                self.client = QdrantClient(url=self.qdrant_url)
+                self.qdrant_client = QdrantClient(url=self.qdrant_url)
             
             # Test connection
             return self.test_connection()
@@ -311,7 +348,6 @@ class QdrantDocManager:
     def update_embedding_provider(self, 
                                  provider: str,
                                  config_override: Optional[Dict[str, Any]] = None) -> bool:
-
         try:
             # Update provider
             if provider not in ['ollama', 'azure', 'gemini']:
@@ -333,12 +369,68 @@ class QdrantDocManager:
         except Exception as e:
             print(f"❌ Error updating embedding provider: {e}")
             return False
+            
+    def refresh_config_from_api(self, config_url: str = "http://localhost:8001/config/config_embed") -> bool:
+        """
+        Refresh configuration by fetching the latest from the API endpoint.
+        
+        Args:
+            config_url (str, optional): URL to fetch configuration from.
+                Default is "http://localhost:8001/config/config_embed".
+                
+        Returns:
+            bool: True if configuration was successfully refreshed, False otherwise.
+        """
+        try:
+            # Fetch configuration from HTTP endpoint
+            response = requests.get(config_url, timeout=5)
+            if response.status_code != 200:
+                print(f"❌ Failed to fetch configuration from API: {response.status_code}")
+                return False
+                
+            # Parse the JSON response
+            config_data = response.json()
+            
+            # Create a new ConfigParser instance
+            new_config = configparser.ConfigParser()
+            
+            # Convert JSON config to ConfigParser format
+            for section, options in config_data.get("configs", {}).items():
+                if not new_config.has_section(section):
+                    new_config.add_section(section)
+                for option, value in options.items():
+                    new_config.set(section, option, str(value))
+            
+            # Replace current config with new config
+            self.config = new_config
+            
+            # Update instance properties
+            self.embedding_provider = self.config.get('GENERAL', 'embedding_provider', fallback='ollama')
+            self.qdrant_url = self.config.get('QDRANT', 'url', fallback='http://localhost:6333')
+            self.qdrant_api_key = self.config.get('QDRANT', 'api_key', fallback='')
+            self.chunk_size = self.config.getint('CHUNKING', 'chunk_size', fallback=400)
+            self.chunk_overlap = self.config.getint('CHUNKING', 'chunk_overlap', fallback=200)
+            
+            # Re-initialize embeddings with the new configuration
+            self.embeddings = self._initialize_embeddings()
+            
+            print(f"✅ Configuration successfully refreshed from API: {config_url}")
+            return True
+        except Exception as e:
+            print(f"❌ Error refreshing configuration from API: {e}")
+            return False
     
     def test_connection(self) -> bool:
-
+        """
+        Tests the connection to the Qdrant server by attempting to retrieve the list of collections.
+        Returns:
+            bool: True if the connection is successful, False otherwise.
+        Raises:
+            Exception: If there is an error while connecting to the Qdrant server.
+        """
         try:
             # Try to get collections to test connection
-            collections = self.client.get_collections()
+            collections = self.qdrant_client.get_collections()
             print(f"Connection successful! Server has {len(collections.collections)} collections")
             return True
         except Exception as e:
@@ -346,14 +438,32 @@ class QdrantDocManager:
             return False
     
     def get_collection_points(self, collection_name: str, limit: int = 100, with_payload: bool = True, with_vectors: bool = False) -> list:
-
+        """
+        Retrieve points from a specified Qdrant collection with optional payload and vector data.
+        Args:
+            collection_name (str): Name of the Qdrant collection to retrieve points from.
+            limit (int, optional): Maximum number of points to retrieve. Defaults to 100.
+            with_payload (bool, optional): Whether to include payload data for each point. Defaults to True.
+            with_vectors (bool, optional): Whether to include vector data for each point. Defaults to False.
+        Returns:
+            list: A list of dictionaries, each representing a point with the following structure:
+                - id (str or int): Unique identifier of the point.
+                - payload (dict): Payload data associated with the point (empty if not present).
+                - vector (list or None): Vector data if requested and available, otherwise None.
+                - vector_dimension (int or None): Dimension of the vector if present, otherwise None.
+                - payload_summary (dict, optional): Summary of payload keys and a preview of content for text fields.
+        Raises:
+            Exception: If an error occurs during retrieval, prints the error and returns an empty list.
+        Example:
+            points = get_collection_points("my_collection", limit=10, with_payload=True, with_vectors=True)
+        """
         try:
             if not self._collection_exists(collection_name):
                 print(f"Collection '{collection_name}' does not exist")
                 return []
             
             # Get points from the collection
-            points = self.client.scroll(
+            points = self.qdrant_client.scroll(
                 collection_name=collection_name,
                 limit=limit,
                 with_payload=with_payload,
@@ -414,6 +524,26 @@ class QdrantDocManager:
             return []
     
     def get_point_details(self, collection_name: str, point_id: str) -> dict:
+        """
+        Retrieves detailed information about a specific point from a Qdrant collection.
+        Args:
+            collection_name (str): The name of the Qdrant collection to search in.
+            point_id (str): The unique identifier of the point to retrieve.
+        Returns:
+            dict: A dictionary containing detailed information about the point, including:
+                - 'id': The point's unique identifier.
+                - 'payload': The payload data associated with the point.
+                - 'vector': The vector representation of the point (if available).
+                - 'vector_dimension': The dimension of the vector (if available).
+                - 'payload_analysis': Analysis of the payload, including:
+                    - 'total_keys': Number of keys in the payload.
+                    - 'key_types': Data types of each payload key.
+                    - 'content_lengths': Lengths of string values in the payload.
+                    - 'full_content': Full content of each payload key.
+        Notes:
+            - Returns an empty dictionary if the collection or point does not exist, or if an error occurs.
+            - Prints informative messages for missing collections, points, or errors.
+        """
 
         try:
             if not self._collection_exists(collection_name):
@@ -421,7 +551,7 @@ class QdrantDocManager:
                 return {}
             
             # Get specific point
-            points = self.client.retrieve(
+            points = self.qdrant_client.retrieve(
                 collection_name=collection_name,
                 ids=[point_id],
                 with_payload=True,
@@ -467,73 +597,6 @@ class QdrantDocManager:
             print(f"Error getting point details for {point_id} from collection {collection_name}: {e}")
             return {}
     
-    def search_similar(self, query: str, collection_name: str, k: int = 3) -> list:
-        """
-        Search for documents similar to the query in the specified collection.
-        
-        Args:
-            query (str): The search query text
-            collection_name (str): Name of the collection to search in
-            k (int, optional): Number of results to return. Default is 3.
-            
-        Returns:
-            list: List of dictionaries containing search results with scores and metadata
-        """
-        try:
-            if not self._collection_exists(collection_name):
-                print(f"Collection '{collection_name}' does not exist")
-                return []
-            
-            print(f"Searching for similar documents to query: '{query[:50]}...' (truncated)" if len(query) > 50 else f"Searching for similar documents to query: '{query}'")
-            
-            # Generate embeddings for the query
-            query_embedding = self.embeddings.embed_query(query)
-            
-            # Search for similar points in the collection
-            search_results = self.client.search(
-                collection_name=collection_name,
-                query_vector=query_embedding,
-                limit=k,
-                with_payload=True
-            )
-            
-            # Transform search results into detailed dictionaries
-            result_points = []
-            for point in search_results:
-                result_point = {
-                    'id': point.id,
-                    'score': point.score,
-                    'payload': dict(point.payload) if point.payload else {},
-                    'metadata': {
-                        'similarity_score': point.score
-                    }
-                }
-                
-                # Add filename to metadata if available
-                if point.payload and "filename" in point.payload:
-                    result_point['metadata']['filename'] = point.payload["filename"]
-                
-                result_points.append(result_point)
-            
-            # Print search results summary
-            print(f"Found {len(result_points)} similar documents in collection '{collection_name}'")
-            
-            if result_points:
-                print("Top results:")
-                for i, point in enumerate(result_points):
-                    content_preview = "N/A"
-                    if "page_content" in point['payload']:
-                        content = point['payload']['page_content']
-                        content_preview = (content[:60] + "...") if len(content) > 60 else content
-                    
-                    print(f"  {i+1}. Score: {point['score']:.4f}, ID: {point['id']}, Content: {content_preview}")
-            
-            return result_points
-            
-        except Exception as e:
-            print(f"Error searching similar documents in collection {collection_name}: {e}")
-            return []
-    
     def process_document(self, file_path: str, force_recreate: bool = False) -> bool:
         """
         Process a document file and store its embeddings in Qdrant.
@@ -563,9 +626,10 @@ class QdrantDocManager:
             
             if collection_exists and not force_recreate:
                 print(f"Collection '{collection_name}' already exists. Updating documents...")
+                return True  # Skip processing if collection exists and not forcing recreation
             elif collection_exists and force_recreate:
                 print(f"Recreating collection '{collection_name}'...")
-                self.client.delete_collection(collection_name=collection_name)
+                self.qdrant_client.delete_collection(collection_name=collection_name)
                 collection_exists = False
             
             # Load the document
@@ -590,7 +654,7 @@ class QdrantDocManager:
             
             # Create collection if it doesn't exist
             if not collection_exists:
-                self.client.create_collection(
+                self.qdrant_client.create_collection(
                     collection_name=collection_name,
                     vectors_config=models.VectorParams(
                         size=vector_size, 
@@ -618,7 +682,22 @@ class QdrantDocManager:
             return False
     
     def process_directory(self, directory_path: str = '', force_recreate: bool = False) -> Dict[str, bool]:
-        
+        """
+        Process all files in the specified directory by vectorizing and storing them in Qdrant.
+        This method iterates through each file in the given directory, processes each document 
+        using the process_document method, and collects the processing results.
+        Parameters:
+            directory_path (str): Path to the directory containing files to process.
+                                  If not provided, uses the directory from configuration.
+            force_recreate (bool): If True, forces re-processing of documents even if they
+                                   have been processed before. Default is False.
+        Returns:
+            Dict[str, bool]: Dictionary mapping file paths to processing success status,
+                             where True indicates successful processing and False indicates failure.
+        Raises:
+            Exception: Any exceptions during file processing are caught, logged, and the file is
+                       marked as failed in the results.
+        """
         if not directory_path:
             directory_path = self.config.get("PROCESSING", "src_directory")
         results = {}
@@ -645,10 +724,11 @@ class QdrantDocManager:
 if __name__ == "__main__":
     try:
         # 1. Initialize the document manager
-        # Initialize manager with default config
-        manager = QdrantDocManager()
+        # Initialize manager with default config URL
+        config_url = "http://localhost:8001/config/config_embed"
+        manager = QdrantDocManager(config_url=config_url)
         print("✅ QdrantDocManager initialized successfully")
-        
+
         # 2. Test connection
         print("\n" + "="*80)
         print("TESTING CONNECTION")
@@ -660,158 +740,26 @@ if __name__ == "__main__":
             print("❌ Cannot proceed without a working connection. Please check your Qdrant server.")
             exit(1)
         
-        # 3. List existing collections
+        # 3. Test configuration refresh from API
         print("\n" + "="*80)
-        print("LISTING EXISTING COLLECTIONS")
+        print("TESTING CONFIGURATION REFRESH")
         print("="*80)
-        existing_collections = manager.list_collections()
+        refresh_result = manager.refresh_config_from_api()
+        print(f"Configuration refresh result: {'Success' if refresh_result else 'Failed'}")
+        print(f"Current embedding provider: {manager.embedding_provider}")
+        print(f"Current Qdrant URL: {manager.qdrant_url}")
+        print(f"Current chunk size: {manager.chunk_size}")
         
-        # 4. Process a sample document
-        print("\n" + "="*80)
-        print("PROCESSING A SAMPLE DOCUMENT")
-        print("="*80)
-        
-        # Use a markdown file from the repository as a test document
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        sample_file = os.path.join(parent_dir, "README.md")
-        
-        if not os.path.exists(sample_file):
-            # Fallback to creating a temporary test file
-            print(f"README.md not found at {sample_file}, creating a temporary test file...")
-            sample_file = os.path.join(current_dir, "temp_test_file.md")
-            with open(sample_file, "w") as f:
-                f.write("# Test Document\n\nThis is a temporary test document for Qdrant Document Manager.\n\n" +
-                       "It contains multiple paragraphs to test chunking and embedding functionality.\n\n" +
-                       "The document manager should process this file, split it into chunks, and store the embeddings in Qdrant.")
-            print(f"Created temporary test file at {sample_file}")
-        
-        # Process the document with force_recreate=True to ensure clean test
-        process_result = manager.process_document(sample_file, force_recreate=True)
-        print(f"Document processing result: {'Success' if process_result else 'Failed'}")
-        
-        # 5. Process a directory
+        # 4. Process a directory
         print("\n" + "="*80)
         print("PROCESSING A DIRECTORY")
         print("="*80)
-        
-        # Use the current directory or parent directory for the test
-        # test_dir = current_dir
-        # if not os.listdir(test_dir) or all(os.path.isdir(os.path.join(test_dir, f)) for f in os.listdir(test_dir)):
-        #     test_dir = os.path.dirname(test_dir)
-        
-        # print(f"Testing directory processing with: {test_dir}")
         print(f"Testing directory processing with: src")
 
-        dir_results = manager.process_directory(force_recreate=False)
+        dir_results = manager.process_directory(force_recreate=True)
         
         success_count = sum(1 for result in dir_results.values() if result)
         print(f"Directory processing results: {success_count}/{len(dir_results)} files processed successfully")
-        
-        # 6. List collections after processing
-        print("\n" + "="*80)
-        print("LISTING COLLECTIONS AFTER PROCESSING")
-        print("="*80)
-        updated_collections = manager.list_collections()
-        
-        new_collections = set(updated_collections) - set(existing_collections)
-        print(f"New collections created: {new_collections}")
-        
-        # 7. Get collection points
-        print("\n" + "="*80)
-        print("RETRIEVING COLLECTION POINTS")
-        print("="*80)
-        
-        if updated_collections:
-            test_collection = updated_collections[0]
-            print(f"Testing with collection: {test_collection}")
-            
-            points = manager.get_collection_points(test_collection, limit=5)
-            print(f"Retrieved {len(points)} points from collection {test_collection}")
-            
-            # 8. Get point details for first point
-            if points:
-                print("\n" + "="*80)
-                print("RETRIEVING POINT DETAILS")
-                print("="*80)
-                
-                point_id = points[0]['id']
-                point_details = manager.get_point_details(test_collection, point_id)
-                print(f"Retrieved details for point {point_id}")
-                
-                # 9. Search similar documents
-                print("\n" + "="*80)
-                print("SEARCHING FOR SIMILAR DOCUMENTS")
-                print("="*80)
-                
-                # Extract some text from the point to use as a search query
-                if 'payload' in point_details and 'page_content' in point_details['payload']:
-                    search_text = point_details['payload']['page_content'][:100]  # Use first 100 chars
-                    print(f"Search query: {search_text}")
-                    
-                    search_results = manager.search_similar(search_text, test_collection, k=2)
-                    print(f"Search returned {len(search_results)} results")
-                else:
-                    print("No content available in point details for search")
-            else:
-                print("No points available for testing point details and search")
-        else:
-            print("No collections available for testing")
-        
-        # 10. Update embedding provider
-        print("\n" + "="*80)
-        print("TESTING EMBEDDING PROVIDER UPDATE")
-        print("="*80)
-        
-        # Just test if the method runs without errors using the same provider
-        current_provider = manager.embedding_provider
-        print(f"Current embedding provider: {current_provider}")
-        
-        update_result = manager.update_embedding_provider(current_provider)
-        print(f"Embedding provider update result: {'Success' if update_result else 'Failed'}")
-        
-        # 11. Test deleting a collection
-        print("\n" + "="*80)
-        print("TESTING COLLECTION DELETION")
-        print("="*80)
-        
-        if new_collections:
-            # Delete the first new collection created during the test
-            collection_to_delete = list(new_collections)[0]
-            print(f"Deleting test collection: {collection_to_delete}")
-            
-            delete_result = manager.delete_collection(collection_to_delete)
-            print(f"Collection deletion result: {'Success' if delete_result else 'Failed'}")
-            
-            # Verify deletion
-            final_collections = manager.list_collections()
-            if collection_to_delete not in final_collections:
-                print(f"Verified: Collection {collection_to_delete} was successfully deleted")
-            else:
-                print(f"Verification failed: Collection {collection_to_delete} still exists")
-        else:
-            print("No new collections created during test to delete")
-        
-        # 12. Test connection update
-        print("\n" + "="*80)
-        print("TESTING CONNECTION UPDATE")
-        print("="*80)
-        
-        # Use same URL to just test if the method runs
-        same_url = manager.qdrant_url
-        print(f"Current Qdrant URL: {same_url}")
-        
-        update_conn_result = manager.update_connection(qdrant_url=same_url)
-        print(f"Connection update result: {'Success' if update_conn_result else 'Failed'}")
-        
-        # Clean up temporary test file if created
-        if os.path.exists(os.path.join(current_dir, "temp_test_file.md")):
-            os.remove(os.path.join(current_dir, "temp_test_file.md"))
-            print("Temporary test file removed")
-        
-        print("\n" + "="*80)
-        print("TEST EXECUTION COMPLETE")
-        print("="*80)
         
     except Exception as e:
         print(f"❌ Error during testing: {e}")
