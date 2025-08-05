@@ -1,0 +1,507 @@
+from fastapi import FastAPI, HTTPException, Body
+from pydantic import BaseModel, Field
+from typing import Any, Optional, List, Dict
+import uvicorn
+from langchain_core.prompts import ChatPromptTemplate
+# from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_retrieval_chain
+from langchain_core.messages import SystemMessage
+from qdrant_client import QdrantClient
+from langchain_qdrant import QdrantVectorStore
+from langchain.agents import initialize_agent, AgentType
+from pathlib import Path
+from contextlib import asynccontextmanager
+
+from factory_llm import LLMExecutorFactory, LLMExecutor
+from factory_embedding import EmbeddingModelFactory, EmbeddingModel
+from tool_calls import tools
+
+# Initialize the LLM Factory singleton to manage model creation
+llm_factory = LLMExecutorFactory()
+
+# Initialize the Embedding Factory singleton for embeddings and Qdrant access
+embedding_factory = EmbeddingModelFactory()
+
+# Cache for the current executor to avoid recreating model instances
+CURRENT_EXECUTOR = None
+CURRENT_EXECUTOR_TYPE = embedding_factory.get_current_model() # allow 'ollama', 'gemini', 'azure'
+
+# Define paths for configuration and system messages
+
+BASE_DIR = Path(__file__).parent
+SYSMSG_LOGANALYZER = BASE_DIR / "sysmsg" / "LogAnalyzer.txt"
+SYSMSG_QRT = BASE_DIR / "sysmsg" / "QuickRespTeam.txt"
+
+# Application state management
+class AppState:
+    """
+    Manage shared application state.
+    
+    Attributes:
+        tools: List of available tools for log analysis and quick response
+        sysmsg_loganalyzer: System prompt for log analysis safety checks
+        sysmsg_qrt: System prompt for quick response team execution
+        agent_analyzer: AgentExecutor for log analysis tasks
+        agent_qrt: AgentExecutor for quick response team tasks
+    """
+    def __init__(self):
+        self.tools: list | None = None
+        self.sysmsg_loganalyzer: str | None = None
+        self.sysmsg_qrt: str | None = None
+        self.agent_analyzer: None = None
+        self.agent_qrt: None = None
+app_state = AppState()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan event handler for startup and shutdown.
+    
+    Initializes resources on application startup and cleans up on shutdown
+    
+    Args:
+        app (FastAPI): The FastAPI application instance.
+    """
+    # Load tools
+    try:
+        app_state.tools = tools
+        print(f"Loaded {len(app_state.tools)} tools.")
+    except Exception as e:
+        print(f"Error: Failed to load tools: {e}")
+        raise RuntimeError("Failed to initialize tools, application cannot start.") from e
+
+    # Load system prompt messages
+    try:
+        app_state.sysmsg_loganalyzer = _load_system_message(SYSMSG_LOGANALYZER)
+        app_state.sysmsg_qrt = _load_system_message(SYSMSG_QRT)
+        print("System prompt messages loaded.")
+    except Exception as e:
+        print(f"Error: Failed to load system prompt messages: {e}")
+        raise RuntimeError("Failed to load system prompt messages, application cannot start.") from e
+        
+    # Initialize LLM for analysis tasks
+    # Get the executor and then get the actual LangChain model from it
+    llm = _get_executor(CURRENT_EXECUTOR_TYPE).get_model()
+
+    # Initialize log analyzer
+    app_state.agent_analyzer = initialize_agent(
+        tools=app_state.tools,
+        llm=llm,
+        agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=True,
+        handle_parsing_errors=True
+    )
+    
+    # Initialize LLM for quick response team tasks
+    app_state.agent_qrt = initialize_agent(
+        tools=app_state.tools,
+        llm=llm,
+        agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=True,
+        handle_parsing_errors=True
+    )
+
+    print("Agent executors initialized.")
+    yield
+
+# Initialize FastAPI application with metadata
+app = FastAPI(title="AI SIEM Log Analysis API", 
+              description="API for analyzing logs using different LLM models", 
+              version="1.0.2",
+              lifespan=lifespan)
+
+class LogAnalysisRequest(BaseModel):
+    """
+    Request model for log analysis
+    
+    Attributes:
+        logs: The raw log data to be analyzed by the LLM
+        collection_name: Optional Qdrant collection name to search in
+        top_k: Optional number of similar documents to retrieve from Qdrant
+    """
+    logs: str = Field(..., description="The logs to analyze")
+    collection_name: Optional[str] = Field(None, description="The Qdrant collection name to search in")
+    top_k: Optional[int] = Field(3, description="The number of similar documents to retrieve from Qdrant")
+    
+class ModelInfo(BaseModel):
+    """
+    Information about an available model type
+    
+    Attributes:
+        name: The identifier of the model (e.g., 'ollama', 'gemini', 'azure')
+        description: Human-readable description of the model
+        is_current: Whether this model is currently active
+    """
+    name: str
+    description: str
+    is_current: bool
+
+class APIResponse(BaseModel):
+    """
+    Standard API response model for consistent return formats
+    
+    Attributes:
+        success: Whether the operation was successful
+        message: A descriptive message about the result
+        data: Optional data payload returned by the operation
+    """
+    success: bool
+    message: str
+    data: Optional[Any] = None
+
+def _load_system_message(path: Path) -> str:
+    """
+    Load a system prompt message from the specified file path.
+    
+    Args:
+        path (Path): The path to the system message file.
+    
+    Returns:
+        str: The content of the system message file.
+    
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If there is an error reading the file.
+    """
+    if not path.is_file():
+        raise FileNotFoundError(f"System message file does not exist at: {path}")
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        raise ValueError(f"Error loading system message file '{path}': {e}")
+
+def _get_executor(model_type: Optional[str] = None) -> LLMExecutor:
+    """
+    Get the appropriate LLM executor based on the requested model type
+    
+    This function implements a singleton-like pattern by caching the current executor
+    and only creating a new one when necessary. It also handles fallback logic when
+    a requested model is not available.
+    
+    Args:
+        model_type: The type of model to use ('ollama', 'gemini', 'azure', or None for default)
+        
+    Returns:
+        An instance of LLMExecutor ready to process requests
+        
+    Raises:
+        HTTPException: If the requested model is not available or cannot be initialized
+    """
+    global CURRENT_EXECUTOR, CURRENT_EXECUTOR_TYPE
+    
+    # If no model specified, use the current one
+    if model_type is None:
+        model_type = CURRENT_EXECUTOR_TYPE
+    
+    # If requesting the current model and we have it cached, return it
+    if model_type == CURRENT_EXECUTOR_TYPE and CURRENT_EXECUTOR is not None:
+        return CURRENT_EXECUTOR
+    
+    # Otherwise, try to create the requested executor
+    executor = llm_factory.create_executor(model_type)
+    
+    if executor is None:
+        available = llm_factory.get_available_executors()
+        available_str = ", ".join(available) if available else "None"
+        raise HTTPException(
+            status_code=400,
+            detail=f"Requested model '{model_type}' is not available. Available models: {available_str}"
+        )
+    
+    # Update the cache
+    CURRENT_EXECUTOR = executor
+    CURRENT_EXECUTOR_TYPE = model_type
+    
+    return executor
+
+def _get_embedding_model() -> EmbeddingModel:
+    """
+    Get the appropriate embedding model based on the requested model type
+    
+    This function implements a singleton-like pattern by caching the current embedding model
+    and only creating a new one when necessary.
+        
+    Returns:
+        An instance of EmbeddingModel ready to process embeddings
+        
+    Raises:
+        HTTPException: If the requested model is not available or cannot be initialized
+    """
+    embedding_model = embedding_factory.create_embedding_model()
+    if embedding_model is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Requested embedding model is not available."
+        )
+    
+    return embedding_model
+
+def _get_qdrant_client() -> QdrantClient:
+    """
+    Get the Qdrant client for vector similarity search
+    
+    This function initializes a Qdrant client using the configuration from the embedding factory
+    and caches it for future use.
+    
+    Returns:
+        An instance of QdrantClient ready to perform vector searches
+        
+    Raises:
+        HTTPException: If the Qdrant client cannot be initialized
+    """
+    try:
+        # Get Qdrant configuration from the embedding factory
+        qdrant_config = embedding_factory.get_qdrant_config()
+        
+        # Initialize Qdrant client
+        qdrant_url = qdrant_config.get('url', 'http://localhost:6333')
+        qdrant_api_key = qdrant_config.get('api_key', '')
+        
+        if qdrant_api_key:
+            qdrant_client = QdrantClient(qdrant_url, api_key=qdrant_api_key)
+        else:
+            qdrant_client = QdrantClient(qdrant_url)
+        
+        return qdrant_client
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize Qdrant client: {str(e)}"
+        )
+
+def _get_retriever_instance(collection_name: str, top_k: int = 3) -> List[Dict[str, Any]]:
+    """
+    Retrieve similar documents from Qdrant using the provided query.
+
+    Args:
+        query (str): The query string to search for similar documents.
+        collection_name (str): The name of the Qdrant collection to search in.
+        top_k (int, optional): The number of top similar documents to retrieve. Defaults to 3.
+
+    Returns:
+        List[Dict[str, Any]]: A list of dictionaries representing the similar documents.
+
+    Raises:
+        HTTPException: If there is an error initializing Qdrant or retrieving documents.
+    """
+    try:
+        qdrant = QdrantVectorStore(
+            client=_get_qdrant_client(),
+            collection_name=collection_name,
+            embedding=_get_embedding_model().get_model()
+        )
+        return qdrant.as_retriever(search_kwargs={'k': top_k})
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to convert to Retriever: {str(e)}"
+        )
+
+def _analyze_logs(logs: str):
+    '''
+    Analyze logs using the LLM executor and return the results.
+    Args:
+        logs (str): The raw log data to analyze.
+    Returns:
+        str: The analysis results from the LLM.
+    '''
+    try:
+        print('---')
+        print(logs)
+        print('---')
+
+        agent_prompt = ChatPromptTemplate.from_template([
+            SystemMessage(app_state.sysmsg_loganalyzer),
+            ("human", "{logs}"),
+        ])
+        
+        agent_chain = agent_prompt | app_state.agent_analyzer
+        retreiver = _get_retriever_instance(collection_name="SecurityCriteria", top_k=5)
+
+        rag_chain = retreiver | agent_chain
+
+        
+        print('---')
+        print(type(app_state.agent_analyzer))
+        print(type(retreiver))
+        print('---')
+
+        agent_reply = rag_chain.invoke({"logs": logs})
+        print(agent_reply)
+
+        return agent_reply
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to analyze logs: {str(e)}"
+        )
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for monitoring and status verification
+    
+    This endpoint provides information about the API's health status, including
+    which LLM models are currently available and which one is active. It's useful
+    for monitoring systems and service discovery.
+    
+    Returns:
+        dict: A dictionary with the health status and relevant information
+    """
+    try:
+        available_models = llm_factory.get_available_executors()
+        return {
+            "status": "healthy",
+            "available_models": available_models,
+            "current_model": CURRENT_EXECUTOR_TYPE
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+
+@app.get("/models", response_model=APIResponse)
+async def list_models():
+    """
+    List all available LLM models/executors
+    
+    This endpoint returns information about all LLM models that are currently
+    available for use, including which one is active. This helps clients
+    understand their options for model switching.
+    
+    Returns:
+        APIResponse: A standardized response with the list of available models
+    """
+    try:
+        available = llm_factory.get_available_executors()
+        
+        models_info = []
+        for model in available:
+            models_info.append(ModelInfo(
+                name=model,
+                description=f"LLM executor for {model.capitalize()}",
+                is_current=(model == CURRENT_EXECUTOR_TYPE)
+            ))
+        
+        return APIResponse(
+            success=True,
+            message="Available models retrieved successfully",
+            data=models_info
+        )
+    except Exception as e:
+        return APIResponse(
+            success=False,
+            message=f"Error retrieving models: {str(e)}",
+            data=None
+        )
+
+@app.post("/switch-model", response_model=APIResponse)
+async def switch_model(model_type: str = Body(..., embed=True)):
+    """
+    Switch the active LLM model to a different type
+    
+    This endpoint allows the client to change which LLM model/service is used for analysis.
+    It validates that the requested model is available before switching and provides
+    appropriate error messages if the model cannot be used.
+    
+    Args:
+        model_type: The type of model to switch to ('ollama', 'gemini', 'azure')
+        
+    Returns:
+        APIResponse: A standardized response indicating success or failure
+    """
+    global CURRENT_EXECUTOR
+    try:
+        # Try to get the executor for the requested model
+        CURRENT_EXECUTOR = _get_executor(model_type)
+        
+        return APIResponse(
+            success=True,
+            message=f"Successfully switched to model: {model_type}",
+            data={"model_type": model_type}
+        )
+    except HTTPException as e:
+        return APIResponse(
+            success=False,
+            message=e.detail,
+            data=None
+        )
+    except Exception as e:
+        return APIResponse(
+            success=False,
+            message=f"Error switching model: {str(e)}",
+            data=None
+        )
+
+@app.post("/analyze-logs", response_model=APIResponse)
+async def analyze_logs(request: LogAnalysisRequest):
+    """
+    Analyze logs using the specified LLM model, with optional Qdrant similarity search
+    
+    This is the main endpoint for log analysis. It takes log data from the client,
+    optionally performs a similarity search in Qdrant, and then uses the LLM to
+    analyze the logs and provide insights. The client can specify which model to use
+    and whether to use Qdrant for similarity comparison.
+    
+    Args:
+        request: The LogAnalysisRequest object containing logs and optional model preferences
+        
+    Returns:
+        APIResponse: A standardized response with the analysis results or error details
+    """
+    try:
+        print('---')
+        print(request.logs)
+        print('---')
+
+        return {
+            "success": True,
+            "message": "Log analysis started",
+            "data": _analyze_logs(request.logs)
+        }
+
+    except HTTPException as e:
+        return APIResponse(
+            success=False,
+            message=e.detail,
+            data=None
+        )
+
+if __name__ == "__main__":
+    uvicorn.run("agent_v2:app", host="0.0.0.0", port=8000, reload=True)
+
+# ============================================================================
+# Curl Testing Script
+# ============================================================================
+# This section contains curl commands for testing the API endpoints
+# You can copy these commands and run them in a terminal to test the API
+#
+# 1. Health Check - Verify API is running and check available models
+# curl -X GET http://localhost:8000/health
+#
+# 2. List Models - Get all available LLM models
+# curl -X GET http://localhost:8000/models
+#
+# 3. Switch Model - Change to a different LLM model (example: switch to gemini)
+# curl -X POST http://localhost:8000/switch-model \
+#     -H "Content-Type: application/json" \
+#     -d '{"model_type": "gemini"}'
+#
+# 4. Analyze Logs - Send logs for analysis with default model
+# curl -X POST http://localhost:8000/analyze-logs \
+#     -H "Content-Type: application/json" \
+#     -d '{
+#         "logs": "2024-07-31T10:15:22.123Z ERROR [auth-service] Failed login attempt for user admin from IP 192.168.1.100 - Invalid password (attempt 5 of 5)"
+#     }'
+#
+# 5. Analyze Logs with Qdrant Similarity - Include Qdrant similarity search in the analysis
+# curl -X POST http://localhost:8000/analyze-logs \
+#     -H "Content-Type: application/json" \
+#     -d '{
+#         "logs": "2024-07-31T10:15:22.123Z ERROR [auth-service] Failed login attempt for user admin from IP 192.168.1.100 - Invalid password (attempt 5 of 5)",
+#         "use_qdrant": true,
+#         "collection_name": "security_logs",
+#         "top_k": 3
+#     }'
