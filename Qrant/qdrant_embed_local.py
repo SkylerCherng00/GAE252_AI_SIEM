@@ -13,7 +13,7 @@ Supported Embedding Providers:
 - Azure OpenAI: Azure's hosted embedding models
 - Google Gemini: Google's Gemini embedding models
 
-Configuration is read from config_qdrant_document_manager.ini file
+Configuration is read from config_embed.ini file
 """
 
 import os
@@ -657,7 +657,7 @@ if __name__ == "__main__":
         print("="*80)
         print(f"Testing directory processing with: src")
 
-        dir_results = manager.process_directory(force_recreate=True)
+        dir_results = manager.process_directory(force_recreate=False)
         
         success_count = sum(1 for result in dir_results.values() if result)
         print(f"Directory processing results: {success_count}/{len(dir_results)} files processed successfully")

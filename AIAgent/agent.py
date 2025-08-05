@@ -1,29 +1,109 @@
-from fastapi import FastAPI, HTTPException, Body, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Body
 from pydantic import BaseModel, Field
-from typing import Any, Optional, Dict, List
-from llm_factory import LLMExecutorFactory, LLMExecutor
+from typing import Any, Optional, List, Dict
 import uvicorn
-import requests
-import os
-import shutil
+from qdrant_client import QdrantClient
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import SystemMessage
+from langchain_qdrant import QdrantVectorStore
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 from pathlib import Path
+from contextlib import asynccontextmanager
+import threading
+
+from utils.factory_llm import LLMExecutorFactory, LLMExecutor
+from utils.factory_embedding import EmbeddingModelFactory, EmbeddingModel
+
+# Initialize the LLM Factory singleton to manage model creation
+LLM_FACTORY = LLMExecutorFactory()
+
+# Initialize the Embedding Factory singleton for embeddings and Qdrant access
+EMBEDDING_FACTORY = EmbeddingModelFactory()
+
+# Cache for the current executor to avoid recreating model instances
+CURRENT_EXECUTOR = None
+CURRENT_EXECUTOR_TYPE = EMBEDDING_FACTORY.get_current_model() # allow 'ollama', 'gemini', 'azure'
+
+# Application state management
+class AppState:
+    """
+    Manage shared application state.
+    
+    Attributes:
+        sysmsg_logpreviewer: System prompt for log previewing tasks
+        sysmsg_loganalyzer: System prompt for log analysis safety checks
+        sysmsg_qrt: System prompt for quick response team execution
+        llm: The current LLM executor instance used for analysis tasks
+    """
+    def __init__(self):
+        self.sysmsg_logpreviewer: str | None = None
+        self.sysmsg_loganalyzer: str | None = None
+        self.sysmsg_qrt: str | None = None
+        self.llm: None = None
+APP_STATE = AppState()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan event handler for startup and shutdown.
+    
+    Initializes resources on application startup and cleans up on shutdown
+    
+    Args:
+        app (FastAPI): The FastAPI application instance.
+    """
+    # Load system prompt messages
+    try:
+        def _load_system_message(path: Path) -> str:
+            """
+            Load a system prompt message from the specified file path.
+            
+            Args:
+                path (Path): The path to the system message file.
+            
+            Returns:
+                str: The content of the system message file.
+            
+            Raises:
+                FileNotFoundError: If the file does not exist.
+                ValueError: If there is an error reading the file.
+            """
+            if not path.is_file():
+                raise FileNotFoundError(f"System message file does not exist at: {path}")
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            except Exception as e:
+                raise ValueError(f"Error loading system message file '{path}': {e}")
+
+        # Define paths for configuration and system messages
+        base_dir = Path(__file__).parent
+        sysmsg_LogPreviewer = base_dir / "sysmsg" / "LogPreviewer.txt"
+        sysmsg_LoganAlyzer = base_dir / "sysmsg" / "LogAnalyzer.txt"
+        sysmsg_QRT = base_dir / "sysmsg" / "QuickRespTeam.txt"
+
+        # Load system messages from files
+        APP_STATE.sysmsg_logpreviewer = _load_system_message(sysmsg_LogPreviewer)
+        APP_STATE.sysmsg_loganalyzer = _load_system_message(sysmsg_LoganAlyzer)
+        APP_STATE.sysmsg_qrt = _load_system_message(sysmsg_QRT)
+        print("System prompt messages loaded.")
+    except Exception as e:
+        print(f"Error: Failed to load system prompt messages: {e}")
+        raise RuntimeError("Failed to load system prompt messages, application cannot start.") from e
+        
+    # Initialize LLM for analysis tasks
+    # Get the executor and then get the actual LangChain model from it
+    APP_STATE.llm = _get_executor(CURRENT_EXECUTOR_TYPE).get_model()
+
+    print("Agent executors initialized.")
+    yield
 
 # Initialize FastAPI application with metadata
 app = FastAPI(title="AI SIEM Log Analysis API", 
               description="API for analyzing logs using different LLM models", 
-              version="1.0.0")
-
-# Initialize the LLM Factory singleton to manage model creation
-llm_factory = LLMExecutorFactory()
-
-# Cache for the current executor to avoid recreating model instances
-CURRENT_EXECUTOR = None
-CURRENT_EXECUTOR_TYPE = "ollama"  # Default to ollama as requested
-
-# Qdrant configuration settings
-QDRANT_CONFIG_URL = "http://localhost:10000/config/config_embed"
-CURRENT_COLLECTION = "logs"  # Default collection name for log analysis
+              version="1.0.2",
+              lifespan=lifespan)
 
 class LogAnalysisRequest(BaseModel):
     """
@@ -31,35 +111,12 @@ class LogAnalysisRequest(BaseModel):
     
     Attributes:
         logs: The raw log data to be analyzed by the LLM
-        model_type: Optional type of model to use (e.g., 'ollama', 'gemini', 'azure')
-        model_name: Optional specific model name if the executor supports multiple models
-        use_rag: Whether to use RAG with Qdrant for analysis
-        collection_name: Optional collection name to use for RAG (defaults to CURRENT_COLLECTION)
+        collection_name: Optional Qdrant collection name to search in
+        top_k: Optional number of similar documents to retrieve from Qdrant
     """
     logs: str = Field(..., description="The logs to analyze")
-    model_type: Optional[str] = Field(None, description="The model type to use for analysis")
-    model_name: Optional[str] = Field(None, description="The specific model name to use (if supported by the executor)")
-    use_rag: bool = Field(False, description="Whether to use RAG with Qdrant for analysis")
-    collection_name: Optional[str] = Field(None, description="Collection name to use for RAG")
-    
-class RemoteLogRequest(BaseModel):
-    """
-    Request model for retrieving and analyzing logs from a remote server
-    
-    Attributes:
-        url: The URL of the remote server to fetch logs from
-        auth_header: Optional authorization header for the remote server
-        model_type: Optional type of model to use for analysis
-        save_locally: Whether to save the logs locally before analysis
-        use_rag: Whether to use RAG with Qdrant for analysis
-        collection_name: Optional collection name to use for RAG
-    """
-    url: str = Field(..., description="The URL of the remote server to fetch logs from")
-    auth_header: Optional[Dict[str, str]] = Field(None, description="Authorization header for the remote server")
-    model_type: Optional[str] = Field(None, description="The model type to use for analysis")
-    save_locally: bool = Field(True, description="Whether to save the logs locally before analysis")
-    use_rag: bool = Field(False, description="Whether to use RAG with Qdrant for analysis")
-    collection_name: Optional[str] = Field(None, description="Collection name to use for RAG")
+    collection_name: Optional[str] = Field(None, description="The Qdrant collection name to search in")
+    top_k: Optional[int] = Field(3, description="The number of similar documents to retrieve from Qdrant")
     
 class ModelInfo(BaseModel):
     """
@@ -72,17 +129,6 @@ class ModelInfo(BaseModel):
     """
     name: str
     description: str
-    is_current: bool
-
-class QdrantCollectionInfo(BaseModel):
-    """
-    Information about a Qdrant collection
-    
-    Attributes:
-        name: The name of the collection
-        is_current: Whether this collection is currently being used for RAG
-    """
-    name: str
     is_current: bool
 
 class APIResponse(BaseModel):
@@ -126,10 +172,10 @@ def _get_executor(model_type: Optional[str] = None) -> LLMExecutor:
         return CURRENT_EXECUTOR
     
     # Otherwise, try to create the requested executor
-    executor = llm_factory.create_executor(model_type)
+    executor = LLM_FACTORY.create_executor(model_type)
     
     if executor is None:
-        available = llm_factory.get_available_executors()
+        available = LLM_FACTORY.get_available_executors()
         available_str = ", ".join(available) if available else "None"
         raise HTTPException(
             status_code=400,
@@ -142,513 +188,223 @@ def _get_executor(model_type: Optional[str] = None) -> LLMExecutor:
     
     return executor
 
-def _get_qdrant_config():
+def _get_embedding_model() -> EmbeddingModel:
     """
-    Fetch the Qdrant configuration from the MsgCenter API
+    Get the appropriate embedding model based on the requested model type
     
+    This function implements a singleton-like pattern by caching the current embedding model
+    and only creating a new one when necessary.
+        
     Returns:
-        dict: The Qdrant configuration
+        An instance of EmbeddingModel ready to process embeddings
         
     Raises:
-        HTTPException: If the configuration cannot be fetched
+        HTTPException: If the requested model is not available or cannot be initialized
+    """
+    embedding_model = EMBEDDING_FACTORY.create_embedding_model()
+    if embedding_model is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Requested embedding model is not available."
+        )
+    
+    return embedding_model
+
+def _get_qdrant_client() -> QdrantClient:
+    """
+    Get the Qdrant client for vector similarity search
+    
+    This function initializes a Qdrant client using the configuration from the embedding factory
+    and caches it for future use.
+    
+    Returns:
+        An instance of QdrantClient ready to perform vector searches
+        
+    Raises:
+        HTTPException: If the Qdrant client cannot be initialized
     """
     try:
-        response = requests.get(QDRANT_CONFIG_URL, timeout=5)
-        if response.status_code == 200:
-            return response.json().get('configs')
+        # Get Qdrant configuration from the embedding factory
+        qdrant_config = EMBEDDING_FACTORY.get_qdrant_config()
+        
+        # Initialize Qdrant client
+        qdrant_url = qdrant_config.get('url', 'http://localhost:6333')
+        qdrant_api_key = qdrant_config.get('api_key', '')
+        
+        if qdrant_api_key:
+            qdrant_client = QdrantClient(qdrant_url, api_key=qdrant_api_key)
         else:
+            qdrant_client = QdrantClient(qdrant_url)
+        
+        return qdrant_client
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize Qdrant client: {str(e)}"
+        )
+
+def _get_retriever_instance(collection_name: str, top_k: int = 3) -> List[Dict[str, Any]]:
+    """
+    Retrieve similar documents from Qdrant using the provided query.
+
+    Args:
+        query (str): The query string to search for similar documents.
+        collection_name (str): The name of the Qdrant collection to search in.
+        top_k (int, optional): The number of top similar documents to retrieve. Defaults to 3.
+
+    Returns:
+        List[Dict[str, Any]]: A list of dictionaries representing the similar documents.
+
+    Raises:
+        HTTPException: If there is an error initializing Qdrant or retrieving documents.
+    """
+    try:
+        qdrant = QdrantVectorStore(
+            client=_get_qdrant_client(),
+            collection_name=collection_name,
+            embedding=_get_embedding_model().get_model()
+        )
+        return qdrant.as_retriever(search_kwargs={'k': top_k})
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to convert to Retriever: {str(e)}"
+        )
+
+def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria", top_k: Optional[int] = 5, language_code: Optional[str] = 'zh') -> str:
+    '''
+    Analyze logs using the LLM executor and return the results.
+    Args:
+        logs (str): The raw log data to analyze.
+        collection_name (str): The name of the Qdrant collection to search in for similar logs.
+        top_k (int): The number of similar documents to retrieve from Qdrant.
+        language_code (str): The language in which the report should be generated (default is 'zh' for Traditional Chinese and 'en' for English).
+    Returns:
+        str: The analysis results from the LLM.
+    '''
+    try:
+        global APP_STATE
+        # Validate the collection name
+        if language_code not in ['zh', 'en']:
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to fetch Qdrant configuration: {response.status_code}"
+                status_code=400,
+                detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
             )
+        
+        # Preview the logs before analysis
+        preview_prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(APP_STATE.sysmsg_logpreviewer),
+            ("human", "Preview the following logs:\n\n{input}")
+        ])
+        preview_chain = preview_prompt | APP_STATE.llm
+        preview_result = preview_chain.invoke({"input": logs})
+
+        # Integrate with Qdrant for similarity search if a collection is specified
+        # Create a chat prompt template for the agent
+        agent_prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(APP_STATE.sysmsg_loganalyzer),
+            ("human", '''Analyze the following logs based on the provided context.\n
+             Context:\n{context}\n
+             Logs:\n{input}\n
+             Please provide a detailed analysis in {lang} language.'''),
+        ])
+        
+        # Create a document chain that can process the retrieved documents
+        document_chain = create_stuff_documents_chain(
+            llm=APP_STATE.llm, # Use the base LLM, not the agent
+            prompt=agent_prompt
+        )
+        
+        # Get the retriever for security criteria
+        retriever = _get_retriever_instance(collection_name=collection_name, top_k=top_k)
+        
+        # Create a proper retrieval chain that will combine documents with the query
+        rag_chain = create_retrieval_chain(retriever, document_chain)
+        
+        # The invoke method expects a dict with the 'input' key
+        agent_reply = rag_chain.invoke({"input": preview_result.content, "lang": language_code})
+        result = agent_reply.get('answer', 'No answer found')
+        
+        # The result will be a dict with an "answer" key containing the processed response
+        # print(f"Log preview result: {preview_result.content}\n")
+        # print(f"Agent reply type: {type(agent_reply)} keys:{agent_reply.keys()}\n")
+        # print(f"Agent reply input: {agent_reply.get('input', 'Non input found')}\n")
+        # print(f"Agent reply context: {agent_reply.get('context', 'No context found')}\n")
+        # print(f"Agent reply answer type: {type(agent_reply.get('answer', 'No answer found'))}\n") # str
+        # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
+
+        global lock
+        lock = threading.Lock() 
+        qrt = threading.Thread(target=_launch_qrt, args=(result, language_code))
+        qrt.start()  # Start the QRT thread to handle quick response team execution
+        
+        # Return just the answer string, not the whole dict
+        return result
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error fetching Qdrant configuration: {str(e)}"
+            detail=f"Failed to analyze logs: {str(e)}"
         )
 
-def _get_qdrant_collections():
-    """
-    Get a list of available Qdrant collections
-    
-    Returns:
-        list: List of collection names
-        
-    Raises:
-        HTTPException: If the collections cannot be fetched
-    """
+def _launch_qrt(condition, language_code: Optional[str] = 'zh') -> None:
+
     try:
-        config = _get_qdrant_config()
-        qdrant_url = config.get('QDRANT', {}).get('url', 'http://localhost:6333')
-        
-        # Make a request to the Qdrant API to list collections
-        response = requests.get(f"{qdrant_url}/collections", timeout=5)
-        
-        if response.status_code == 200:
-            collections_data = response.json()
-            return [collection.get('name') for collection in collections_data.get('result', {}).get('collections', [])]
-        else:
+        lock.acquire()  # Ensure thread safety when accessing shared resources
+        global APP_STATE
+        # Validate the collection name
+        if language_code not in ['zh', 'en']:
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to fetch Qdrant collections: {response.status_code}"
+                status_code=400,
+                detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
             )
+        
+        # Integrate with Qdrant for similarity search if a collection is specified
+        # Create a chat prompt template for the agent
+        qrt_prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(APP_STATE.sysmsg_qrt),
+            ("human", '''Analyze the following condition based on the provided context.\n
+                Context:\n{context}\n
+                Report:\n{input}\n
+                Please provide a response in {lang} language.'''),
+        ])
+        
+        # Create a document chain that can process the retrieved documents
+        document_chain = create_stuff_documents_chain(llm = APP_STATE.llm, prompt = qrt_prompt)
+        
+        # Get the retriever for security criteria
+        retriever_sop = _get_retriever_instance(collection_name='SOP', top_k=5)
+        retriever_comtable = _get_retriever_instance(collection_name='ComTable', top_k=5)
+
+        # Create a custom retriever that combines results from both SOP and ComTable
+        from langchain_core.runnables import chain
+        @chain
+        def custom_retriever(inputs):
+            q = inputs["input"]
+            docsA = retriever_sop.invoke(q)
+            docsB = retriever_comtable.invoke(q)
+            return docsA + docsB
+
+        # Create a proper retrieval chain that will combine documents with the query
+        rag_chain = create_retrieval_chain(custom_retriever, document_chain)
+        
+        # The invoke method expects a dict with the 'input' key
+        agent_reply = rag_chain.invoke({"input": condition, "lang": language_code})
+        agent_reply.get('answer', 'No answer found') # string
+
+        # The result will be a dict with an "answer" key containing the processed response
+        # print(f"Agent reply input: {agent_reply.get('input', 'Non input found')}\n")
+        # print(f"Agent reply context: {agent_reply.get('context', 'No context found')}\n")
+        # print(f"Agent reply answer type: {type(agent_reply.get('answer', 'No answer found'))}\n")
+        # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
+
+        return None
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error fetching Qdrant collections: {str(e)}"
+            detail=f"Failed to launch QRT: {str(e)}"
         )
-        
-def _fetch_remote_logs(url: str, auth_header: Optional[Dict[str, str]] = None) -> str:
-    """
-    Fetch logs from a remote server
-    
-    Args:
-        url: The URL to fetch logs from
-        auth_header: Optional authorization header
-        
-    Returns:
-        str: The fetched logs
-        
-    Raises:
-        HTTPException: If the logs cannot be fetched
-    """
-    try:
-        headers = auth_header if auth_header else {}
-        response = requests.get(url, headers=headers, timeout=30)
-        
-        if response.status_code == 200:
-            return response.text
-        else:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Failed to fetch logs from {url}: {response.status_code}"
-            )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching logs from {url}: {str(e)}"
-        )
-        
-def _save_logs_to_file(logs: str, filename: str = "fetched_logs.log") -> str:
-    """
-    Save logs to a local file
-    
-    Args:
-        logs: The logs to save
-        filename: The name of the file to save to
-        
-    Returns:
-        str: The path to the saved file
-        
-    Raises:
-        HTTPException: If the logs cannot be saved
-    """
-    try:
-        # Create logs directory if it doesn't exist
-        logs_dir = Path("logs")
-        logs_dir.mkdir(exist_ok=True)
-        
-        # Save logs to file
-        file_path = logs_dir / filename
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(logs)
-            
-        return str(file_path)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error saving logs to file: {str(e)}"
-        )
-        
-def _query_qdrant_for_context(query: str, collection_name: str) -> str:
-    """
-    Query Qdrant for context to use in the analysis
-    
-    Args:
-        query: The query to search for
-        collection_name: The name of the collection to search in
-        
-    Returns:
-        str: The context from Qdrant
-        
-    Raises:
-        HTTPException: If the context cannot be fetched
-    """
-    try:
-        config = _get_qdrant_config()
-        qdrant_url = config.get('QDRANT', {}).get('url', 'http://localhost:6333')
-        
-        # This is a simplified implementation - in a real system you would:
-        # 1. Generate embeddings for the query using the same model as used in Qdrant
-        # 2. Query Qdrant for similar vectors
-        # 3. Process and return the context
-        
-        # For now, we'll just check if the collection exists
-        response = requests.get(f"{qdrant_url}/collections/{collection_name}", timeout=5)
-        
-        if response.status_code != 200:
-            return "No relevant context found in the knowledge base."
-            
-        # In a real implementation, you would query Qdrant with the embedded query
-        # and return the retrieved context
-        return f"Context from Qdrant collection '{collection_name}' would be retrieved here."
-    except Exception as e:
-        # Log the error but don't fail the analysis
-        print(f"Error querying Qdrant for context: {str(e)}")
-        return "Error retrieving context from the knowledge base."
-
-@app.post("/switch-model", response_model=APIResponse)
-async def switch_model(model_type: str = Body(..., embed=True)):
-    """
-    Switch the active LLM model to a different type
-    
-    This endpoint allows the client to change which LLM model/service is used for analysis.
-    It validates that the requested model is available before switching and provides
-    appropriate error messages if the model cannot be used.
-    
-    Args:
-        model_type: The type of model to switch to ('ollama', 'gemini', 'azure')
-        
-    Returns:
-        APIResponse: A standardized response indicating success or failure
-    """
-    global CURRENT_EXECUTOR
-    try:
-        # Try to get the executor for the requested model
-        CURRENT_EXECUTOR = _get_executor(model_type)
-        
-        return APIResponse(
-            success=True,
-            message=f"Successfully switched to model: {model_type}",
-            data={"model_type": model_type}
-        )
-    except HTTPException as e:
-        return APIResponse(
-            success=False,
-            message=e.detail,
-            data=None
-        )
-    except Exception as e:
-        return APIResponse(
-            success=False,
-            message=f"Error switching model: {str(e)}",
-            data=None
-        )
-
-@app.post("/switch-collection", response_model=APIResponse)
-async def switch_collection(collection_name: str = Body(..., embed=True)):
-    """
-    Switch the active Qdrant collection for RAG
-    
-    This endpoint allows the client to change which Qdrant collection is used for RAG.
-    It validates that the requested collection exists before switching.
-    
-    Args:
-        collection_name: The name of the collection to switch to
-        
-    Returns:
-        APIResponse: A standardized response indicating success or failure
-    """
-    global CURRENT_COLLECTION
-    try:
-        # Check if the collection exists
-        collections = _get_qdrant_collections()
-        
-        if collection_name not in collections:
-            return APIResponse(
-                success=False,
-                message=f"Collection '{collection_name}' does not exist. Available collections: {', '.join(collections)}",
-                data=None
-            )
-        
-        # Update the current collection
-        CURRENT_COLLECTION = collection_name
-        
-        return APIResponse(
-            success=True,
-            message=f"Successfully switched to collection: {collection_name}",
-            data={"collection_name": collection_name}
-        )
-    except HTTPException as e:
-        return APIResponse(
-            success=False,
-            message=e.detail,
-            data=None
-        )
-    except Exception as e:
-        return APIResponse(
-            success=False,
-            message=f"Error switching collection: {str(e)}",
-            data=None
-        )
-
-@app.post("/analyze-logs", response_model=APIResponse)
-async def analyze_logs(request: LogAnalysisRequest):
-    """
-    Analyze logs using the specified LLM model, optionally with RAG
-    
-    This is the main endpoint for log analysis. It takes log data from the client,
-    formats it into a prompt for the LLM, and returns the analysis results. The client
-    can optionally specify which model to use for the analysis and whether to use RAG.
-    
-    Args:
-        request: The LogAnalysisRequest object containing logs and analysis preferences
-        
-    Returns:
-        APIResponse: A standardized response with the analysis results or error details
-    """
-    try:
-        # Get the executor for the requested model type (if specified)
-        executor = _get_executor(request.model_type)
-        
-        # Determine the collection to use for RAG
-        collection_name = request.collection_name or CURRENT_COLLECTION
-        
-        # Prepare the system message with appropriate instructions
-        system_message = """
-        You are an AI SIEM log analyzer. Your task is to analyze the provided logs and identify 
-        any security issues, anomalies, or concerns. Provide a detailed explanation of your findings 
-        and recommendations for action.
-        
-        Focus on:
-        1. Unusual login patterns or failed authentication attempts
-        2. Potential data exfiltration
-        3. Signs of lateral movement
-        4. Privilege escalation
-        5. Unusual network traffic
-        6. Malware indicators
-        7. Configuration issues
-        8. Any other security concerns
-        
-        Format your response with sections for:
-        - Summary of findings
-        - Detailed analysis
-        - Recommendations
-        - Severity level
-        """
-        
-        # If RAG is requested, get context from Qdrant
-        rag_context = ""
-        if request.use_rag:
-            try:
-                # Use the first part of the logs as a query to find relevant context
-                query = request.logs[:500]  # Use first 500 chars as the query
-                rag_context = _query_qdrant_for_context(query, collection_name)
-                
-                # Add the RAG context to the system message
-                system_message += f"""
-                
-                RELEVANT CONTEXT FROM KNOWLEDGE BASE:
-                {rag_context}
-                """
-            except Exception as e:
-                # Log the error but continue with the analysis without RAG
-                print(f"Error using RAG: {str(e)}")
-        
-        # Prepare the full prompt
-        prompt = f"""
-        {system_message}
-        
-        LOGS:
-        {request.logs}
-        """
-                    
-        # Generate the analysis
-        analysis = executor.generate_response(prompt)
-        
-        return APIResponse(
-            success=True,
-            message="Log analysis completed successfully",
-            data={
-                "analysis": analysis, 
-                "model_used": CURRENT_EXECUTOR_TYPE,
-                "rag_used": request.use_rag,
-                "collection_used": collection_name if request.use_rag else None
-            }
-        )
-    except HTTPException as e:
-        return APIResponse(
-            success=False,
-            message=e.detail,
-            data=None
-        )
-    except Exception as e:
-        return APIResponse(
-            success=False,
-            message=f"Error analyzing logs: {str(e)}",
-            data=None
-        )
-
-@app.post("/analyze-remote-logs", response_model=APIResponse)
-async def analyze_remote_logs(request: RemoteLogRequest):
-    """
-    Fetch logs from a remote server and analyze them
-    
-    This endpoint fetches logs from a remote server, optionally saves them locally,
-    and then analyzes them using the specified LLM model, optionally with RAG.
-    
-    Args:
-        request: The RemoteLogRequest object containing the remote server details and analysis preferences
-        
-    Returns:
-        APIResponse: A standardized response with the analysis results or error details
-    """
-    try:
-        # Fetch logs from the remote server
-        logs = _fetch_remote_logs(request.url, request.auth_header)
-        
-        # Save logs locally if requested
-        saved_file_path = None
-        if request.save_locally:
-            # Generate a filename based on the URL
-            filename = f"remote_logs_{Path(request.url).name}.log"
-            saved_file_path = _save_logs_to_file(logs, filename)
-        
-        # Create a LogAnalysisRequest object to reuse the analyze_logs functionality
-        analysis_request = LogAnalysisRequest(
-            logs=logs,
-            model_type=request.model_type,
-            use_rag=request.use_rag,
-            collection_name=request.collection_name
-        )
-        
-        # Analyze the logs
-        analysis_response = await analyze_logs(analysis_request)
-        
-        # Add the saved file path to the response if logs were saved locally
-        if saved_file_path and analysis_response.success:
-            analysis_response.data["saved_file_path"] = saved_file_path
-        
-        return analysis_response
-    except HTTPException as e:
-        return APIResponse(
-            success=False,
-            message=e.detail,
-            data=None
-        )
-    except Exception as e:
-        return APIResponse(
-            success=False,
-            message=f"Error analyzing remote logs: {str(e)}",
-            data=None
-        )
-
-@app.post("/upload-log-file", response_model=APIResponse)
-async def upload_and_analyze_log_file(
-    file: UploadFile = File(...),
-    model_type: Optional[str] = None,
-    use_rag: bool = False,
-    collection_name: Optional[str] = None
-):
-    """
-    Upload a log file, save it locally, and analyze it
-    
-    This endpoint allows the client to upload a log file, which is saved locally
-    and then analyzed using the specified LLM model, optionally with RAG.
-    
-    Args:
-        file: The log file to upload and analyze
-        model_type: Optional model type to use for analysis
-        use_rag: Whether to use RAG for analysis
-        collection_name: Optional collection name to use for RAG
-        
-    Returns:
-        APIResponse: A standardized response with the analysis results or error details
-    """
-    try:
-        # Create logs directory if it doesn't exist
-        logs_dir = Path("logs")
-        logs_dir.mkdir(exist_ok=True)
-        
-        # Save the uploaded file
-        file_path = logs_dir / file.filename
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        # Read the log file
-        with open(file_path, "r", encoding="utf-8") as f:
-            logs = f.read()
-        
-        # Create a LogAnalysisRequest object to reuse the analyze_logs functionality
-        analysis_request = LogAnalysisRequest(
-            logs=logs,
-            model_type=model_type,
-            use_rag=use_rag,
-            collection_name=collection_name
-        )
-        
-        # Analyze the logs
-        analysis_response = await analyze_logs(analysis_request)
-        
-        # Add the saved file path to the response
-        if analysis_response.success:
-            analysis_response.data["saved_file_path"] = str(file_path)
-        
-        return analysis_response
-    except Exception as e:
-        return APIResponse(
-            success=False,
-            message=f"Error uploading and analyzing log file: {str(e)}",
-            data=None
-        )
-
-@app.get("/logs/{filename}", response_class=FileResponse)
-async def get_log_file(filename: str):
-    """
-    Get a specific log file
-    
-    This endpoint returns a specific log file from the logs directory.
-    
-    Args:
-        filename: The name of the log file to get
-        
-    Returns:
-        FileResponse: The requested log file
-        
-    Raises:
-        HTTPException: If the file does not exist
-    """
-    file_path = Path("logs") / filename
-    
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"Log file {filename} not found")
-    
-    return FileResponse(str(file_path))
-
-@app.get("/logs", response_model=APIResponse)
-async def list_log_files():
-    """
-    List all log files in the logs directory
-    
-    This endpoint returns a list of all log files in the logs directory.
-    
-    Returns:
-        APIResponse: A standardized response with the list of log files
-    """
-    try:
-        logs_dir = Path("logs")
-        logs_dir.mkdir(exist_ok=True)
-        
-        files = []
-        for file_path in logs_dir.glob("*"):
-            if file_path.is_file():
-                files.append({
-                    "name": file_path.name,
-                    "size_bytes": file_path.stat().st_size,
-                    "last_modified": file_path.stat().st_mtime
-                })
-        
-        return APIResponse(
-            success=True,
-            message=f"Found {len(files)} log files",
-            data={"files": files}
-        )
-    except Exception as e:
-        return APIResponse(
-            success=False,
-            message=f"Error listing log files: {str(e)}",
-            data=None
-        )
+    finally:
+        lock.release()
 
 @app.get("/health")
 async def health_check():
@@ -656,29 +412,18 @@ async def health_check():
     Health check endpoint for monitoring and status verification
     
     This endpoint provides information about the API's health status, including
-    which LLM models are currently available and which one is active. It also
-    includes information about available Qdrant collections for RAG.
+    which LLM models are currently available and which one is active. It's useful
+    for monitoring systems and service discovery.
     
     Returns:
         dict: A dictionary with the health status and relevant information
     """
     try:
-        available_models = llm_factory.get_available_executors()
-        
-        # Get Qdrant collections if possible
-        qdrant_collections = []
-        try:
-            qdrant_collections = _get_qdrant_collections()
-        except Exception as e:
-            print(f"Error getting Qdrant collections: {str(e)}")
-        
+        available_models = LLM_FACTORY.get_available_executors()
         return {
             "status": "healthy",
             "available_models": available_models,
-            "current_model": CURRENT_EXECUTOR_TYPE,
-            "qdrant_status": "available" if qdrant_collections else "unavailable",
-            "available_collections": qdrant_collections,
-            "current_collection": CURRENT_COLLECTION
+            "current_model": CURRENT_EXECUTOR_TYPE
         }
     except Exception as e:
         return {
@@ -699,7 +444,7 @@ async def list_models():
         APIResponse: A standardized response with the list of available models
     """
     try:
-        available = llm_factory.get_available_executors()
+        available = LLM_FACTORY.get_available_executors()
         
         models_info = []
         for model in available:
@@ -721,32 +466,31 @@ async def list_models():
             data=None
         )
 
-@app.get("/collections", response_model=APIResponse)
-async def list_collections():
+@app.post("/switch-model", response_model=APIResponse)
+async def switch_model(model_type: str = Body(..., embed=True)):
     """
-    List all available Qdrant collections for RAG
+    Switch the active LLM model to a different type
     
-    This endpoint returns information about all Qdrant collections that are currently
-    available for use with RAG, including which one is active. This helps clients
-    understand their options for collection switching.
+    This endpoint allows the client to change which LLM model/service is used for analysis.
+    It validates that the requested model is available before switching and provides
+    appropriate error messages if the model cannot be used.
     
-    Returns:
-        APIResponse: A standardized response with the list of available collections
-    """
-    try:
-        collections = _get_qdrant_collections()
+    Args:
+        model_type: The type of model to switch to ('ollama', 'gemini', 'azure')
         
-        collections_info = []
-        for collection in collections:
-            collections_info.append(QdrantCollectionInfo(
-                name=collection,
-                is_current=(collection == CURRENT_COLLECTION)
-            ))
+    Returns:
+        APIResponse: A standardized response indicating success or failure
+    """
+    global CURRENT_EXECUTOR, APP_STATE
+    try:
+        # Try to get the executor for the requested model
+        CURRENT_EXECUTOR = _get_executor(model_type)
+        APP_STATE.llm = CURRENT_EXECUTOR.get_model()  # Update the LLM instance
         
         return APIResponse(
             success=True,
-            message="Available collections retrieved successfully",
-            data=collections_info
+            message=f"Successfully switched to model: {model_type}",
+            data={"model_type": model_type}
         )
     except HTTPException as e:
         return APIResponse(
@@ -757,15 +501,41 @@ async def list_collections():
     except Exception as e:
         return APIResponse(
             success=False,
-            message=f"Error retrieving collections: {str(e)}",
+            message=f"Error switching model: {str(e)}",
+            data=None
+        )
+
+@app.post("/analyze-logs", response_model=APIResponse)
+async def analyze_logs(request: LogAnalysisRequest):
+    """
+    Analyze logs using the specified LLM model, with optional Qdrant similarity search
+    
+    This is the main endpoint for log analysis. It takes log data from the client,
+    optionally performs a similarity search in Qdrant, and then uses the LLM to
+    analyze the logs and provide insights. The client can specify which model to use
+    and whether to use Qdrant for similarity comparison.
+    
+    Args:
+        request: The LogAnalysisRequest object containing logs and optional model preferences
+        
+    Returns:
+        APIResponse: A standardized response with the analysis results or error details
+    """
+    try:
+        return {
+            "success": True,
+            "message": "Log analysis started",
+            "data": _analyze_logs(request.logs)
+        }
+
+    except HTTPException as e:
+        return APIResponse(
+            success=False,
+            message=e.detail,
             data=None
         )
 
 if __name__ == "__main__":
-    # Create logs directory if it doesn't exist
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
-    
     uvicorn.run("agent:app", host="0.0.0.0", port=8000, reload=True)
 
 # ============================================================================
@@ -780,52 +550,24 @@ if __name__ == "__main__":
 # 2. List Models - Get all available LLM models
 # curl -X GET http://localhost:8000/models
 #
-# 3. List Collections - Get all available Qdrant collections
-# curl -X GET http://localhost:8000/collections
-#
-# 4. Switch Model - Change to a different LLM model (example: switch to gemini)
+# 3. Switch Model - Change to a different LLM model (example: switch to gemini)
 # curl -X POST http://localhost:8000/switch-model \
 #     -H "Content-Type: application/json" \
 #     -d '{"model_type": "gemini"}'
 #
-# 5. Switch Collection - Change to a different Qdrant collection
-# curl -X POST http://localhost:8000/switch-collection \
+# 4. Analyze Logs - Send logs for analysis with default model
+# curl -X POST http://localhost:8000/analyze-logs \
 #     -H "Content-Type: application/json" \
-#     -d '{"collection_name": "security_logs"}'
+#     -d '{
+#         "logs": "2024-07-31T10:15:22.123Z ERROR [auth-service] Failed login attempt for user admin from IP 192.168.1.100 - Invalid password (attempt 5 of 5)"
+#     }'
 #
-# 6. Analyze Logs - Send logs for analysis with default model
+# 5. Analyze Logs with Qdrant Similarity - Include Qdrant similarity search in the analysis
 # curl -X POST http://localhost:8000/analyze-logs \
 #     -H "Content-Type: application/json" \
 #     -d '{
 #         "logs": "2024-07-31T10:15:22.123Z ERROR [auth-service] Failed login attempt for user admin from IP 192.168.1.100 - Invalid password (attempt 5 of 5)",
-#         "use_rag": false
+#         "use_qdrant": true,
+#         "collection_name": "security_logs",
+#         "top_k": 3
 #     }'
-#
-# 7. Analyze Logs with RAG - Send logs for analysis with RAG
-# curl -X POST http://localhost:8000/analyze-logs \
-#     -H "Content-Type: application/json" \
-#     -d '{
-#         "logs": "2024-07-31T10:15:22.123Z ERROR [auth-service] Failed login attempt for user admin from IP 192.168.1.100 - Invalid password (attempt 5 of 5)",
-#         "use_rag": true,
-#         "collection_name": "security_logs"
-#     }'
-#
-# 8. Analyze Remote Logs - Fetch and analyze logs from a remote server
-# curl -X POST http://localhost:8000/analyze-remote-logs \
-#     -H "Content-Type: application/json" \
-#     -d '{
-#         "url": "http://example.com/logs/security.log",
-#         "save_locally": true,
-#         "use_rag": false
-#     }'
-#
-# 9. Upload and Analyze Log File - Upload a log file and analyze it
-# curl -X POST http://localhost:8000/upload-log-file \
-#     -F "file=@/path/to/local/logfile.log" \
-#     -F "use_rag=false"
-#
-# 10. List Log Files - Get a list of all log files
-# curl -X GET http://localhost:8000/logs
-#
-# 11. Get Log File - Get a specific log file
-# curl -X GET http://localhost:8000/logs/logfile.log --output downloaded_logfile.log
