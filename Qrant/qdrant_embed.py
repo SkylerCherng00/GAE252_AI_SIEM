@@ -684,7 +684,6 @@ if __name__ == "__main__":
     try:
         # 1. Initialize the document manager
         # Initialize manager with default config URL from MsgCenter API
-        # config_url = "http://localhost:10000/config/config_embed"
         print(f"🔄 Initializing QdrantDocManager with configuration from API: {CONFIG_URL}")
         manager = QdrantDocManager()
         print("✅ QdrantDocManager initialized successfully")

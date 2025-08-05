@@ -1,10 +1,9 @@
-import os
 import requests
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 
 # HTTP Endpoint
-CONFIG_URL = "http://localhost:10000/config/config_factory"
+CONFIG_FACTORY_URL = "http://localhost:10000/config/config_factory"
 
 class LLMExecutor(ABC):
     """Abstract base class for LLM executors"""
@@ -39,7 +38,8 @@ class OllamaExecutor(LLMExecutor):
             
             self._llm = OllamaLLM(
                 base_url=self.host,
-                model=self.current_model
+                model=self.current_model,
+                temperature=0
             )
         except Exception as e:
             print(f"Error initializing Ollama LLM: {str(e)}")
@@ -91,7 +91,8 @@ class GeminiExecutor(LLMExecutor):
             
             self._llm = ChatGoogleGenerativeAI(
                 model=self.current_model,
-                google_api_key=self.api_key
+                google_api_key=self.api_key,
+                temperature=0                
             )
         except Exception as e:
             print(f"Error initializing Gemini LLM: {str(e)}")
@@ -144,7 +145,9 @@ class AzureOpenAIExecutor(LLMExecutor):
                 azure_endpoint=self.endpoint,
                 azure_deployment=self.current_model,
                 api_key=self.api_key,
-                api_version=self.api_version
+                api_version=self.api_version,
+                temperature=0,
+                max_retries=3
             )
         except Exception as e:
             print(f"Error initializing Azure OpenAI LLM: {str(e)}")
@@ -206,10 +209,10 @@ class LLMExecutorFactory:
 
         try:
             # Fetch configuration from HTTP endpoint
-            response = requests.get(CONFIG_URL, timeout=5)
+            response = requests.get(CONFIG_FACTORY_URL, timeout=5)
             if response.status_code == 200:
                 self.config = response.json().get('configs')
-                print(f"✅ Configuration loaded from API: {CONFIG_URL}")
+                print(f"✅ Configuration loaded from API: {CONFIG_FACTORY_URL}")
                 
             else:
                 print(f"❌ Failed to fetch configuration from API: {response.status_code}")
@@ -320,8 +323,9 @@ if __name__ == "__main__":
     print(f"Available executors: {available_executors}")
     
     # Get the first available executor
-    executor = factory.create_executor(executor_type='ollama')
+    # executor = factory.create_executor(executor_type='ollama')
     # executor = factory.create_executor(executor_type="gemini")
+    executor = factory.create_executor(executor_type='azure')
     
     if executor is None:
         print("No executor could be created. Please check your configuration.")
