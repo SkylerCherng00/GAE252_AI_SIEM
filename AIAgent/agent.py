@@ -1,7 +1,9 @@
-from fastapi import FastAPI, HTTPException, Body
-from pydantic import BaseModel, Field
-from typing import Any, Optional, List, Dict
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+
+from pydantic import BaseModel, Field
+from typing import Any, Optional, List, Dict, Union
 from qdrant_client import QdrantClient
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage
@@ -10,10 +12,11 @@ from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from pathlib import Path
 from contextlib import asynccontextmanager
-import threading
+# import threading
 
 from utils.factory_llm import LLMExecutorFactory, LLMExecutor
 from utils.factory_embedding import EmbeddingModelFactory, EmbeddingModel
+from utils.util_mongodb import MongoDBHandler
 
 # Initialize the LLM Factory singleton to manage model creation
 LLM_FACTORY = LLMExecutorFactory()
@@ -104,6 +107,14 @@ app = FastAPI(title="AI SIEM Log Analysis API",
               description="API for analyzing logs using different LLM models", 
               version="1.0.2",
               lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # For development only, restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class LogAnalysisRequest(BaseModel):
     """
@@ -271,6 +282,40 @@ def _get_retriever_instance(collection_name: str, top_k: int = 3) -> List[Dict[s
             detail=f"Failed to convert to Retriever: {str(e)}"
         )
 
+def _write_to_mongodb(collection_name: str, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> bool:
+    """
+    Write data to MongoDB using the MongoDBHandler.
+    
+    Args:
+        collection_name (str): The name of the MongoDB collection to write to.
+        data (Union[Dict[str, Any], List[Dict[str, Any]]]): The data to insert, either a single document (dict) 
+                                                             or multiple documents (list of dicts).
+    
+    Returns:
+        bool: True if the write operation was successful, False otherwise.
+    """
+    try:
+        # Initialize the MongoDB handler
+        mongo_handler = MongoDBHandler()
+        
+        # Ensure the collection exists
+        if not mongo_handler.create_collection(collection_name):
+            print(f"Failed to create or verify collection: {collection_name}")
+            return False
+        
+        # Insert the data
+        result = mongo_handler.insert_data(collection_name, data)
+        
+        if result:
+            print(f"Successfully wrote data to MongoDB collection: {collection_name}")
+        else:
+            print(f"Failed to write data to MongoDB collection: {collection_name}")
+            
+        return result
+    except Exception as e:
+        print(f"Error writing to MongoDB: {str(e)}")
+        return False
+
 def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria", top_k: Optional[int] = 5, language_code: Optional[str] = 'zh') -> str:
     '''
     Analyze logs using the LLM executor and return the results.
@@ -333,10 +378,11 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         # print(f"Agent reply answer type: {type(agent_reply.get('answer', 'No answer found'))}\n") # str
         # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
 
-        global lock
-        lock = threading.Lock() 
-        qrt = threading.Thread(target=_launch_qrt, args=(result, language_code))
-        qrt.start()  # Start the QRT thread to handle quick response team execution
+        # Launch the Quick Response Team (QRT) execution in a separate thread
+        # global lock
+        # lock = threading.Lock() 
+        # qrt = threading.Thread(target=_launch_qrt, args=(result, language_code))
+        # qrt.start()  # Start the QRT thread to handle quick response team execution
         
         # Return just the answer string, not the whole dict
         return result
@@ -346,65 +392,72 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
             detail=f"Failed to analyze logs: {str(e)}"
         )
 
-def _launch_qrt(condition, language_code: Optional[str] = 'zh') -> None:
-
-    try:
-        lock.acquire()  # Ensure thread safety when accessing shared resources
-        global APP_STATE
-        # Validate the collection name
-        if language_code not in ['zh', 'en']:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
-            )
+# def _launch_qrt(condition, language_code: Optional[str] = 'zh') -> None:
+#     '''
+#     Launch the Quick Response Team (QRT) execution based on the provided condition.
+#     Args:
+#         condition (str): The condition to analyze and execute the QRT response.
+#         language_code (str): The language in which the report should be generated (default is 'zh' for Traditional Chinese and 'en' for English).
+#     Returns:
+#         None
+#     '''
+#     try:
+#         lock.acquire()  # Ensure thread safety when accessing shared resources
+#         global APP_STATE
+#         # Validate the collection name
+#         if language_code not in ['zh', 'en']:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
+#             )
         
-        # Integrate with Qdrant for similarity search if a collection is specified
-        # Create a chat prompt template for the agent
-        qrt_prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(APP_STATE.sysmsg_qrt),
-            ("human", '''Analyze the following condition based on the provided context.\n
-                Context:\n{context}\n
-                Report:\n{input}\n
-                Please provide a response in {lang} language.'''),
-        ])
+#         # Integrate with Qdrant for similarity search if a collection is specified
+#         # Create a chat prompt template for the agent
+#         qrt_prompt = ChatPromptTemplate.from_messages([
+#             SystemMessage(APP_STATE.sysmsg_qrt),
+#             ("human", '''Analyze the following condition based on the provided context.\n
+#                 Context:\n{context}\n
+#                 Report:\n{input}\n
+#                 Please provide a response in {lang} language.'''),
+#         ])
         
-        # Create a document chain that can process the retrieved documents
-        document_chain = create_stuff_documents_chain(llm = APP_STATE.llm, prompt = qrt_prompt)
+#         # Create a document chain that can process the retrieved documents
+#         document_chain = create_stuff_documents_chain(llm = APP_STATE.llm, prompt = qrt_prompt)
         
-        # Get the retriever for security criteria
-        retriever_sop = _get_retriever_instance(collection_name='SOP', top_k=5)
-        retriever_comtable = _get_retriever_instance(collection_name='ComTable', top_k=5)
+#         # Get the retriever for security criteria
+#         retriever_sop = _get_retriever_instance(collection_name='SOP', top_k=5)
+#         retriever_comtable = _get_retriever_instance(collection_name='ComTable', top_k=5)
 
-        # Create a custom retriever that combines results from both SOP and ComTable
-        from langchain_core.runnables import chain
-        @chain
-        def custom_retriever(inputs):
-            q = inputs["input"]
-            docsA = retriever_sop.invoke(q)
-            docsB = retriever_comtable.invoke(q)
-            return docsA + docsB
+#         # Create a custom retriever that combines results from both SOP and ComTable
+#         from langchain_core.runnables import chain
+#         @chain
+#         def custom_retriever(inputs):
+#             q = inputs["input"]
+#             docsA = retriever_sop.invoke(q)
+#             docsB = retriever_comtable.invoke(q)
+#             return docsA + docsB
 
-        # Create a proper retrieval chain that will combine documents with the query
-        rag_chain = create_retrieval_chain(custom_retriever, document_chain)
+#         # Create a proper retrieval chain that will combine documents with the query
+#         rag_chain = create_retrieval_chain(custom_retriever, document_chain)
         
-        # The invoke method expects a dict with the 'input' key
-        agent_reply = rag_chain.invoke({"input": condition, "lang": language_code})
-        agent_reply.get('answer', 'No answer found') # string
+#         # The invoke method expects a dict with the 'input' key
+#         agent_reply = rag_chain.invoke({"input": condition, "lang": language_code})
+#         agent_reply.get('answer', 'No answer found') # string
 
-        # The result will be a dict with an "answer" key containing the processed response
-        # print(f"Agent reply input: {agent_reply.get('input', 'Non input found')}\n")
-        # print(f"Agent reply context: {agent_reply.get('context', 'No context found')}\n")
-        # print(f"Agent reply answer type: {type(agent_reply.get('answer', 'No answer found'))}\n")
-        # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
+#         # The result will be a dict with an "answer" key containing the processed response
+#         # print(f"Agent reply input: {agent_reply.get('input', 'Non input found')}\n")
+#         # print(f"Agent reply context: {agent_reply.get('context', 'No context found')}\n")
+#         # print(f"Agent reply answer type: {type(agent_reply.get('answer', 'No answer found'))}\n")
+#         # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
 
-        return None
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to launch QRT: {str(e)}"
-        )
-    finally:
-        lock.release()
+#         return None
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Failed to launch QRT: {str(e)}"
+#         )
+#     finally:
+#         lock.release()
 
 @app.get("/health")
 async def health_check():
@@ -534,6 +587,59 @@ async def analyze_logs(request: LogAnalysisRequest):
             message=e.detail,
             data=None
         )
+
+@app.post("/analyze-logs/upload", response_model=APIResponse)
+async def analyze_logs_upload(file: UploadFile = File(...)):
+    """
+    Analyze logs with file upload support
+    This endpoint allows clients to upload log files for analysis. It checks the file
+    extension, saves the file to a designated directory, and then reads the contents
+    for analysis using the LLM. It supports common log file formats like .txt, .csv,
+    .json, and .log.
+
+    Args:
+        file: The log file to be uploaded and analyzed. Must be one of the allowed formats.
+    
+    Returns:
+        APIResponse: A standardized response indicating success or failure of the upload and analysis
+    """
+     # Check file extension
+    allowed_extensions = ['.txt', '.csv', '.json', '.log']
+    file_extension = Path(file.filename).suffix.lower()
+    
+    if file_extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported file extension: {file_extension}. Allowed: {', '.join(allowed_extensions)}"
+        )
+    try:
+        # Create docs directory if it doesn't exist
+        docs_dir = Path("logs")
+        docs_dir.mkdir(exist_ok=True)
+        
+        # Save file to docs directory
+        file_path = docs_dir / file.filename
+        print(f"Saving file to: {file_path}")
+        
+        # The crucial step: write the contents of the UploadFile to the new file
+        # Using a sync operation with a thread pool to avoid blocking the event loop
+        import shutil
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Open the file and read its contents
+        with open(file_path, "r", encoding="utf-8") as f:
+            logs = f.read()
+
+        return {
+            "success": True,
+            "message": "Log analysis started",
+            "data": _analyze_logs(logs)
+        }
+    except Exception as e:
+        # Catch and handle exceptions, making sure to include the original error message
+        # for better debugging.
+        raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("agent:app", host="0.0.0.0", port=8000, reload=True)

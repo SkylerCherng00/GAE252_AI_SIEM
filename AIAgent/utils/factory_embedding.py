@@ -1,9 +1,10 @@
 import requests
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
+from .endpoint import endpoint_url
 
 # HTTP Endpoint
-CONFIG_EMBED_URL = "http://localhost:10000/config/config_embed"
+CONFIG_EMBED_URL = endpoint_url + "config_embed"
 
 class EmbeddingModel(ABC):
     """Abstract base class for embedding models"""

@@ -1,9 +1,10 @@
 import requests
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
+from .endpoint import endpoint_url
 
 # HTTP Endpoint
-CONFIG_FACTORY_URL = "http://localhost:10000/config/config_factory"
+CONFIG_FACTORY_URL = endpoint_url + "config_factory"
 
 class LLMExecutor(ABC):
     """Abstract base class for LLM executors"""
@@ -71,7 +72,7 @@ class OllamaExecutor(LLMExecutor):
     def is_available(self) -> bool:
         try:
             import requests
-            response = requests.get(f"{self.host}/api/tags")
+            response = requests.get(f"{self.host}/api/tags", timeout=3)
             return response.status_code == 200
         except Exception:
             return False
@@ -209,7 +210,7 @@ class LLMExecutorFactory:
 
         try:
             # Fetch configuration from HTTP endpoint
-            response = requests.get(CONFIG_FACTORY_URL, timeout=5)
+            response = requests.get(CONFIG_FACTORY_URL, timeout=3)
             if response.status_code == 200:
                 self.config = response.json().get('configs')
                 print(f"✅ Configuration loaded from API: {CONFIG_FACTORY_URL}")

@@ -22,9 +22,11 @@ app.add_middleware(
 )
 
 # Define paths to configuration files
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_EMBED_PATH = os.path.join(CURRENT_DIR, "config_embed.ini")
-CONFIG_FACTORY_PATH = os.path.join(CURRENT_DIR, "config_factory.ini")
+CURRENT_DIR = os.path.dirname(__file__)
+CONFIG_DIR = os.path.join(CURRENT_DIR, "config")
+CONFIG_EMBED_PATH = os.path.join(CONFIG_DIR, "config_embed.ini")
+CONFIG_FACTORY_PATH = os.path.join(CONFIG_DIR, "config_factory.ini")
+CONFIG_MONGODB_PATH = os.path.join(CONFIG_DIR, "config_mongodb.ini")
 
 # Pydantic models for response schemas
 class ConfigResponse(BaseModel):
@@ -178,6 +180,33 @@ async def get_config_factory():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading factory configuration: {str(e)}")
+
+@app.get("/config/config_mongodb", response_model=AllConfigResponse)
+async def get_config_mongodb():
+    """
+    Get MongoDB connection string from the configuration file
+    Returns:
+        AllConfigResponse with MongoDB connection string from config_mongodb.ini
+    Example Response:
+        {
+            "filename": "config_mongodb.ini",
+            "configs": {
+                "MONGODB": {
+                    "connection_string": "mongodb://localhost:27017"
+                }
+            }
+        }
+    Raises:
+        HTTPException: If there's an error loading the configuration
+    """
+    try:
+        config = _load_config(CONFIG_MONGODB_PATH)
+        return {
+            "filename": "config_mongodb.ini",
+            "configs": _config_to_dict(config)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading mongodb configuration: {str(e)}")
 
 @app.put("/config/config_embed", response_model=AllConfigResponse, status_code=status.HTTP_200_OK)
 async def update_config_embed(request: AllConfigUpdateRequest):
