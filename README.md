@@ -17,3 +17,4 @@
   - `python ./AIAgent/agent.py`
 - To test the analysis feature, open the webpage in `./AIAgent/agent_test.html`
   - The webpage will send a request to the agent API, which will return the analysis result
+- Alternatively, we can browse the swagger UI at `http://localhost:8000/docs` to test the API endpoints directly after running the agent.
