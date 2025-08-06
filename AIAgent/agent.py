@@ -373,6 +373,7 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         # The invoke method expects a dict with the 'input' key
         agent_reply = rag_chain.invoke({"input": preview_result.content, "lang": language_code})
         result = agent_reply.get('answer', 'No answer found')
+        # print(f"Log analysis result: {result}\n")
 
         # Write the analysis result to MongoDB
         result_json = json.loads(result)
@@ -397,6 +398,11 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         
         # Return just the answer string, not the whole dict
         return result
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to decode JSON from analysis result: {str(e)}"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -460,6 +466,11 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
         _write_to_mongodb(collection_name='QRTResults', data=result_json)
 
         return None
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to decode JSON from QRT response: {str(e)}"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -547,8 +558,16 @@ async def switch_model(model_type: str = Body(..., embed=True)):
     """
     # global CURRENT_EXECUTOR, APP_STATE
     try:
+        # Validate the requested model type
+        if model_type not in ['ollama', 'gemini', 'azure']:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid model type '{model_type}'. Supported models: 'ollama', 'gemini', 'azure'."
+            )
+
         # Try to get the executor for the requested model
         APP_STATE.current_executor = _get_executor(model_type)
+        APP_STATE.current_executor_type = model_type
         APP_STATE.llm = APP_STATE.current_executor.get_model()  # Update the LLM
         
         return APIResponse(
