@@ -2,28 +2,28 @@
 
 [GENERAL]
 # Options: ollama, azure, gemini
-embedding_provider = ollama
+embedding_provider = ollama | azure | gemini
 
 [OLLAMA]
-base_url = http://192.168.72.20:11434
+base_url = http://localhost:11434
 embedding_model = nomic-embed-text:v1.5
 
 [AZURE]
-api_key = 
-api_base = 
-api_version = 2023-05-15
+api_key = your_azure_openai_api_key
+api_base = your_azure_openai_endpoint
+api_version = 2024-10-21
 embedding_deployment = text-embedding-ada-002
 
 [GEMINI]
 api_key = 
 model_name = models/embedding-001
 # Recommend 768, 1536, 3072
-output_dimensionality = 768
+output_dimensionality = 768 | 1536 | 3072
 
 [QDRANT]
 # Left api_key empty when using qdrant on-premise
-url = 
-api_key = 
+url = http://localhost:6333
+api_key = Left_api_key_empty_when_using_qdrant_on-premise
 
 [CHUNKING]
 chunk_size = 800
