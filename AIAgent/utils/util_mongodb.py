@@ -48,7 +48,7 @@ class MongoDBHandler:
                 
             else:
                 print(f"❌ Failed to fetch configuration from API: {response.status_code}")
-            connection_string = self.config.get('MONGODB', '').get('connection_string', '')
+            connection_string = self.config.get('Mongodb', '').get('connection_string', '')
             self.client = pymongo.MongoClient(connection_string)
             self.db = self.client[db_name]
             self.client.server_info()

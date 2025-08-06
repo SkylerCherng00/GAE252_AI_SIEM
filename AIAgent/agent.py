@@ -12,21 +12,16 @@ from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from pathlib import Path
 from contextlib import asynccontextmanager
-# import threading
+import threading
+import json
+import datetime
+import os
+# Change the working directory to the project root
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 from utils.factory_llm import LLMExecutorFactory, LLMExecutor
 from utils.factory_embedding import EmbeddingModelFactory, EmbeddingModel
 from utils.util_mongodb import MongoDBHandler
-
-# Initialize the LLM Factory singleton to manage model creation
-LLM_FACTORY = LLMExecutorFactory()
-
-# Initialize the Embedding Factory singleton for embeddings and Qdrant access
-EMBEDDING_FACTORY = EmbeddingModelFactory()
-
-# Cache for the current executor to avoid recreating model instances
-CURRENT_EXECUTOR = None
-CURRENT_EXECUTOR_TYPE = EMBEDDING_FACTORY.get_current_model() # allow 'ollama', 'gemini', 'azure'
 
 # Application state management
 class AppState:
@@ -34,16 +29,26 @@ class AppState:
     Manage shared application state.
     
     Attributes:
+        factory_llm: Factory for creating LLM executors
+        factory_embedding: Factory for creating embedding models
+        current_executor: The currently active LLM executor instance
+        current_executor_type: The type of the currently active LLM executor
         sysmsg_logpreviewer: System prompt for log previewing tasks
         sysmsg_loganalyzer: System prompt for log analysis safety checks
         sysmsg_qrt: System prompt for quick response team execution
         llm: The current LLM executor instance used for analysis tasks
+        mongo_handler: MongoDB handler instance for database operations
     """
     def __init__(self):
+        self.factory_llm: None = None
+        self.factory_embedding: None = None
+        self.current_executor: None = None
+        self.current_executor_type: str = ''
         self.sysmsg_logpreviewer: str | None = None
         self.sysmsg_loganalyzer: str | None = None
         self.sysmsg_qrt: str | None = None
         self.llm: None = None
+        self.mongo_handler: None = None
 APP_STATE = AppState()
 
 @asynccontextmanager
@@ -56,8 +61,16 @@ async def lifespan(app: FastAPI):
     Args:
         app (FastAPI): The FastAPI application instance.
     """
-    # Load system prompt messages
     try:
+        # Initialize the LLM and embedding factories
+        APP_STATE.factory_llm = LLMExecutorFactory()
+        APP_STATE.factory_embedding = EmbeddingModelFactory()
+
+        # Set the current executor and type based on the embedding factory
+        APP_STATE.current_executor = None
+        APP_STATE.current_executor_type = APP_STATE.factory_embedding.get_current_model()
+
+        # Load system prompt messages
         def _load_system_message(path: Path) -> str:
             """
             Load a system prompt message from the specified file path.
@@ -97,9 +110,12 @@ async def lifespan(app: FastAPI):
         
     # Initialize LLM for analysis tasks
     # Get the executor and then get the actual LangChain model from it
-    APP_STATE.llm = _get_executor(CURRENT_EXECUTOR_TYPE).get_model()
-
+    APP_STATE.llm = _get_executor(APP_STATE.current_executor_type).get_model()
     print("Agent executors initialized.")
+
+    # Initialize MongoDB handler
+    APP_STATE.mongo_handler = MongoDBHandler()  # Initialize MongoDB handler
+    print("MongoDB handler initialized.")
     yield
 
 # Initialize FastAPI application with metadata
@@ -172,21 +188,19 @@ def _get_executor(model_type: Optional[str] = None) -> LLMExecutor:
     Raises:
         HTTPException: If the requested model is not available or cannot be initialized
     """
-    global CURRENT_EXECUTOR, CURRENT_EXECUTOR_TYPE
-    
     # If no model specified, use the current one
     if model_type is None:
-        model_type = CURRENT_EXECUTOR_TYPE
+        model_type = APP_STATE.current_executor_type
     
     # If requesting the current model and we have it cached, return it
-    if model_type == CURRENT_EXECUTOR_TYPE and CURRENT_EXECUTOR is not None:
-        return CURRENT_EXECUTOR
-    
+    if model_type == APP_STATE.current_executor_type and APP_STATE.current_executor is not None:
+        return APP_STATE.current_executor
+
     # Otherwise, try to create the requested executor
-    executor = LLM_FACTORY.create_executor(model_type)
+    executor = APP_STATE.factory_llm.create_executor(model_type)
     
     if executor is None:
-        available = LLM_FACTORY.get_available_executors()
+        available = APP_STATE.factory_llm.get_available_executors()
         available_str = ", ".join(available) if available else "None"
         raise HTTPException(
             status_code=400,
@@ -194,8 +208,8 @@ def _get_executor(model_type: Optional[str] = None) -> LLMExecutor:
         )
     
     # Update the cache
-    CURRENT_EXECUTOR = executor
-    CURRENT_EXECUTOR_TYPE = model_type
+    APP_STATE.current_executor = executor
+    APP_STATE.current_executor_type = model_type
     
     return executor
 
@@ -212,7 +226,8 @@ def _get_embedding_model() -> EmbeddingModel:
     Raises:
         HTTPException: If the requested model is not available or cannot be initialized
     """
-    embedding_model = EMBEDDING_FACTORY.create_embedding_model()
+    embedding_model = APP_STATE.factory_embedding.create_embedding_model()
+
     if embedding_model is None:
         raise HTTPException(
             status_code=400,
@@ -236,7 +251,7 @@ def _get_qdrant_client() -> QdrantClient:
     """
     try:
         # Get Qdrant configuration from the embedding factory
-        qdrant_config = EMBEDDING_FACTORY.get_qdrant_config()
+        qdrant_config = APP_STATE.factory_embedding.get_qdrant_config()
         
         # Initialize Qdrant client
         qdrant_url = qdrant_config.get('url', 'http://localhost:6333')
@@ -295,16 +310,13 @@ def _write_to_mongodb(collection_name: str, data: Union[Dict[str, Any], List[Dic
         bool: True if the write operation was successful, False otherwise.
     """
     try:
-        # Initialize the MongoDB handler
-        mongo_handler = MongoDBHandler()
-        
         # Ensure the collection exists
-        if not mongo_handler.create_collection(collection_name):
+        if not APP_STATE.mongo_handler.create_collection(collection_name):
             print(f"Failed to create or verify collection: {collection_name}")
             return False
         
         # Insert the data
-        result = mongo_handler.insert_data(collection_name, data)
+        result = APP_STATE.mongo_handler.insert_data(collection_name, data)
         
         if result:
             print(f"Successfully wrote data to MongoDB collection: {collection_name}")
@@ -328,7 +340,6 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         str: The analysis results from the LLM.
     '''
     try:
-        global APP_STATE
         # Validate the collection name
         if language_code not in ['zh', 'en']:
             raise HTTPException(
@@ -369,6 +380,13 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         # The invoke method expects a dict with the 'input' key
         agent_reply = rag_chain.invoke({"input": preview_result.content, "lang": language_code})
         result = agent_reply.get('answer', 'No answer found')
+
+        # Write the analysis result to MongoDB
+        result_json = json.loads(result)
+        timestamp_float = datetime.datetime.now().timestamp()
+        result_json['timestamp'] = timestamp_float
+        # print(f"Log analysis result: {result_json}\n")
+        _write_to_mongodb(collection_name='LogAnalysisResults', data=result_json)
         
         # The result will be a dict with an "answer" key containing the processed response
         # print(f"Log preview result: {preview_result.content}\n")
@@ -379,10 +397,10 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
 
         # Launch the Quick Response Team (QRT) execution in a separate thread
-        # global lock
-        # lock = threading.Lock() 
-        # qrt = threading.Thread(target=_launch_qrt, args=(result, language_code))
-        # qrt.start()  # Start the QRT thread to handle quick response team execution
+        global lock
+        lock = threading.Lock() 
+        qrt = threading.Thread(target=_launch_qrt, args=(result, language_code, timestamp_float))
+        qrt.start()  # Start the QRT thread to handle quick response team execution
         
         # Return just the answer string, not the whole dict
         return result
@@ -392,72 +410,77 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
             detail=f"Failed to analyze logs: {str(e)}"
         )
 
-# def _launch_qrt(condition, language_code: Optional[str] = 'zh') -> None:
-#     '''
-#     Launch the Quick Response Team (QRT) execution based on the provided condition.
-#     Args:
-#         condition (str): The condition to analyze and execute the QRT response.
-#         language_code (str): The language in which the report should be generated (default is 'zh' for Traditional Chinese and 'en' for English).
-#     Returns:
-#         None
-#     '''
-#     try:
-#         lock.acquire()  # Ensure thread safety when accessing shared resources
-#         global APP_STATE
-#         # Validate the collection name
-#         if language_code not in ['zh', 'en']:
-#             raise HTTPException(
-#                 status_code=400,
-#                 detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
-#             )
+def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp : float = .0) -> None:
+    '''
+    Launch the Quick Response Team (QRT) execution based on the provided condition.
+    Args:
+        condition (str): The condition to analyze and execute the QRT response.
+        language_code (str): The language in which the report should be generated (default is 'zh' for Traditional Chinese and 'en' for English).
+    Returns:
+        None
+    '''
+    try:
+        lock.acquire()  # Ensure thread safety when accessing shared resources
+        # Validate the collection name
+        if language_code not in ['zh', 'en']:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
+            )
         
-#         # Integrate with Qdrant for similarity search if a collection is specified
-#         # Create a chat prompt template for the agent
-#         qrt_prompt = ChatPromptTemplate.from_messages([
-#             SystemMessage(APP_STATE.sysmsg_qrt),
-#             ("human", '''Analyze the following condition based on the provided context.\n
-#                 Context:\n{context}\n
-#                 Report:\n{input}\n
-#                 Please provide a response in {lang} language.'''),
-#         ])
+        # Integrate with Qdrant for similarity search if a collection is specified
+        # Create a chat prompt template for the agent
+        qrt_prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(APP_STATE.sysmsg_qrt),
+            ("human", '''Analyze the following condition based on the provided context.\n
+                Context:\n{context}\n
+                Report:\n{input}\n
+                Please provide a response in {lang} language.'''),
+        ])
         
-#         # Create a document chain that can process the retrieved documents
-#         document_chain = create_stuff_documents_chain(llm = APP_STATE.llm, prompt = qrt_prompt)
+        # Create a document chain that can process the retrieved documents
+        document_chain = create_stuff_documents_chain(llm = APP_STATE.llm, prompt = qrt_prompt)
         
-#         # Get the retriever for security criteria
-#         retriever_sop = _get_retriever_instance(collection_name='SOP', top_k=5)
-#         retriever_comtable = _get_retriever_instance(collection_name='ComTable', top_k=5)
+        # Get the retriever for security criteria
+        retriever_sop = _get_retriever_instance(collection_name='SOP', top_k=5)
+        retriever_comtable = _get_retriever_instance(collection_name='ComTable', top_k=5)
 
-#         # Create a custom retriever that combines results from both SOP and ComTable
-#         from langchain_core.runnables import chain
-#         @chain
-#         def custom_retriever(inputs):
-#             q = inputs["input"]
-#             docsA = retriever_sop.invoke(q)
-#             docsB = retriever_comtable.invoke(q)
-#             return docsA + docsB
+        # Create a custom retriever that combines results from both SOP and ComTable
+        from langchain_core.runnables import chain
+        @chain
+        def custom_retriever(inputs):
+            q = inputs["input"]
+            docsA = retriever_sop.invoke(q)
+            docsB = retriever_comtable.invoke(q)
+            return docsA + docsB
 
-#         # Create a proper retrieval chain that will combine documents with the query
-#         rag_chain = create_retrieval_chain(custom_retriever, document_chain)
+        # Create a proper retrieval chain that will combine documents with the query
+        rag_chain = create_retrieval_chain(custom_retriever, document_chain)
         
-#         # The invoke method expects a dict with the 'input' key
-#         agent_reply = rag_chain.invoke({"input": condition, "lang": language_code})
-#         agent_reply.get('answer', 'No answer found') # string
+        # The invoke method expects a dict with the 'input' key
+        agent_reply = rag_chain.invoke({"input": condition, "lang": language_code})
+        result = agent_reply.get('answer', 'No answer found') # string
 
-#         # The result will be a dict with an "answer" key containing the processed response
-#         # print(f"Agent reply input: {agent_reply.get('input', 'Non input found')}\n")
-#         # print(f"Agent reply context: {agent_reply.get('context', 'No context found')}\n")
-#         # print(f"Agent reply answer type: {type(agent_reply.get('answer', 'No answer found'))}\n")
-#         # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
+        # The result will be a dict with an "answer" key containing the processed response
+        # print(f"Agent reply input: {agent_reply.get('input', 'Non input found')}\n")
+        # print(f"Agent reply context: {agent_reply.get('context', 'No context found')}\n")
+        # print(f"Agent reply answer type: {type(agent_reply.get('answer', 'No answer found'))}\n")
+        # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
 
-#         return None
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=500,
-#             detail=f"Failed to launch QRT: {str(e)}"
-#         )
-#     finally:
-#         lock.release()
+        # Write the QRT response to MongoDB
+        result_json = json.loads(result)
+        result_json['timestamp'] = timestamp
+        # print(f"QRT execution result: {result_json}\n")
+        _write_to_mongodb(collection_name='QRTResults', data=result_json)
+
+        return None
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to launch QRT: {str(e)}"
+        )
+    finally:
+        lock.release()
 
 @app.get("/health")
 async def health_check():
@@ -472,11 +495,12 @@ async def health_check():
         dict: A dictionary with the health status and relevant information
     """
     try:
-        available_models = LLM_FACTORY.get_available_executors()
+        available_models = APP_STATE.factory_llm.get_available_executors()
+
         return {
             "status": "healthy",
             "available_models": available_models,
-            "current_model": CURRENT_EXECUTOR_TYPE
+            "current_model": APP_STATE.current_executor_type
         }
     except Exception as e:
         return {
@@ -497,14 +521,15 @@ async def list_models():
         APIResponse: A standardized response with the list of available models
     """
     try:
-        available = LLM_FACTORY.get_available_executors()
+        # available = LLM_FACTORY.get_available_executors()
+        available = APP_STATE.factory_llm.get_available_executors()
         
         models_info = []
         for model in available:
             models_info.append(ModelInfo(
                 name=model,
                 description=f"LLM executor for {model.capitalize()}",
-                is_current=(model == CURRENT_EXECUTOR_TYPE)
+                is_current=(model == APP_STATE.current_executor_type)
             ))
         
         return APIResponse(
@@ -534,11 +559,11 @@ async def switch_model(model_type: str = Body(..., embed=True)):
     Returns:
         APIResponse: A standardized response indicating success or failure
     """
-    global CURRENT_EXECUTOR, APP_STATE
+    # global CURRENT_EXECUTOR, APP_STATE
     try:
         # Try to get the executor for the requested model
-        CURRENT_EXECUTOR = _get_executor(model_type)
-        APP_STATE.llm = CURRENT_EXECUTOR.get_model()  # Update the LLM instance
+        APP_STATE.current_executor = _get_executor(model_type)
+        APP_STATE.llm = APP_STATE.current_executor.get_model()  # Update the LLM
         
         return APIResponse(
             success=True,
