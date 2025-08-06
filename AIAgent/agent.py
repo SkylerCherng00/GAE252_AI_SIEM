@@ -686,37 +686,3 @@ async def analyze_logs_upload(file: UploadFile = File(...), language_code: Optio
 
 if __name__ == "__main__":
     uvicorn.run("agent:app", host="0.0.0.0", port=8000)
-
-# ============================================================================
-# Curl Testing Script
-# ============================================================================
-# This section contains curl commands for testing the API endpoints
-# You can copy these commands and run them in a terminal to test the API
-#
-# 1. Health Check - Verify API is running and check available models
-# curl -X GET http://localhost:8000/agent/health
-#
-# 2. List Models - Get all available LLM models
-# curl -X GET http://localhost:8000/agent/models
-#
-# 3. Switch Model - Change to a different LLM model (example: switch to gemini)
-# curl -X POST http://localhost:8000/agent/switch-model \
-#     -H "Content-Type: application/json" \
-#     -d '{"model_type": "gemini"}'
-#
-# 4. Analyze Logs - Send logs for analysis with default model
-# curl -X POST http://localhost:8000/agent/analyze-logs \
-#     -H "Content-Type: application/json" \
-#     -d '{
-#         "logs": "2024-07-31T10:15:22.123Z ERROR [auth-service] Failed login attempt for user admin from IP 192.168.1.100 - Invalid password (attempt 5 of 5)"
-#     }'
-#
-# 5. Analyze Logs with Qdrant Similarity - Include Qdrant similarity search in the analysis
-# curl -X POST http://localhost:8000/agent/analyze-logs \
-#     -H "Content-Type: application/json" \
-#     -d '{
-#         "logs": "2024-07-31T10:15:22.123Z ERROR [auth-service] Failed login attempt for user admin from IP 192.168.1.100 - Invalid password (attempt 5 of 5)",
-#         "use_qdrant": true,
-#         "collection_name": "security_logs",
-#         "top_k": 3
-#     }'
