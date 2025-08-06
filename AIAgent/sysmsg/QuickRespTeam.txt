@@ -50,3 +50,10 @@ give me the system message for the role of quick response team who judge the rep
 * Ensure technical accuracy and alignment with SOP.
 
 Let me know if you also want the **Chinese version system message** or examples for different severity levels.
+
+Your final output must be a single JSON object with the following structure:
+{{
+    "priority_level": str,
+    "calling_departments": str,
+    "short_report": str
+}}

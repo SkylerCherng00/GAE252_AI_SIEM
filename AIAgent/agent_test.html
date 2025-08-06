@@ -298,7 +298,7 @@
             const baseUrl = apiUrlInput.value.trim();
             try {
                 // Try a simple CORS preflight check
-                const response = await fetch(`${baseUrl}/health`, {
+                const response = await fetch(`${baseUrl}/agent/health`, {
                     method: 'HEAD', // Less resource-intensive than GET
                     mode: 'cors',
                     credentials: 'same-origin'
@@ -370,7 +370,7 @@
         // API functions
         async function makeApiRequest(endpoint, method = 'GET', data = null) {
             const baseUrl = apiUrlInput.value.trim();
-            const url = `${baseUrl}${endpoint}`;
+            const url = `${baseUrl}/agent${endpoint}`;
             
             const options = {
                 method,
@@ -407,7 +407,7 @@
 
         async function uploadFile(file) {
             const baseUrl = apiUrlInput.value.trim();
-            const url = `${baseUrl}/analyze-logs/upload`;
+            const url = `${baseUrl}/agent/analyze-logs/upload`;
             
             const formData = new FormData();
             formData.append('file', file);

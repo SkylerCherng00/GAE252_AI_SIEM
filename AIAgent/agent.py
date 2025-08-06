@@ -340,13 +340,6 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         str: The analysis results from the LLM.
     '''
     try:
-        # Validate the collection name
-        if language_code not in ['zh', 'en']:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
-            )
-        
         # Preview the logs before analysis
         preview_prompt = ChatPromptTemplate.from_messages([
             SystemMessage(APP_STATE.sysmsg_logpreviewer),
@@ -421,12 +414,6 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
     '''
     try:
         lock.acquire()  # Ensure thread safety when accessing shared resources
-        # Validate the collection name
-        if language_code not in ['zh', 'en']:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
-            )
         
         # Integrate with Qdrant for similarity search if a collection is specified
         # Create a chat prompt template for the agent
@@ -470,7 +457,6 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
         # Write the QRT response to MongoDB
         result_json = json.loads(result)
         result_json['timestamp'] = timestamp
-        # print(f"QRT execution result: {result_json}\n")
         _write_to_mongodb(collection_name='QRTResults', data=result_json)
 
         return None
@@ -482,7 +468,7 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
     finally:
         lock.release()
 
-@app.get("/health")
+@app.get("/agent/health")
 async def health_check():
     """
     Health check endpoint for monitoring and status verification
@@ -508,7 +494,7 @@ async def health_check():
             "error": str(e)
         }
 
-@app.get("/models", response_model=APIResponse)
+@app.get("/agent/models", response_model=APIResponse)
 async def list_models():
     """
     List all available LLM models/executors
@@ -544,7 +530,7 @@ async def list_models():
             data=None
         )
 
-@app.post("/switch-model", response_model=APIResponse)
+@app.post("/agent/switch-model", response_model=APIResponse)
 async def switch_model(model_type: str = Body(..., embed=True)):
     """
     Switch the active LLM model to a different type
@@ -583,8 +569,8 @@ async def switch_model(model_type: str = Body(..., embed=True)):
             data=None
         )
 
-@app.post("/analyze-logs", response_model=APIResponse)
-async def analyze_logs(request: LogAnalysisRequest):
+@app.post("/agent/analyze-logs", response_model=APIResponse)
+async def analyze_logs(request: LogAnalysisRequest, language_code: Optional[str] = 'zh'):
     """
     Analyze logs using the specified LLM model, with optional Qdrant similarity search
     
@@ -600,10 +586,16 @@ async def analyze_logs(request: LogAnalysisRequest):
         APIResponse: A standardized response with the analysis results or error details
     """
     try:
+        if language_code not in ['zh', 'en']:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
+            )
+        
         return {
             "success": True,
             "message": "Log analysis started",
-            "data": _analyze_logs(request.logs)
+            "data": _analyze_logs(request.logs,language_code=language_code,)
         }
 
     except HTTPException as e:
@@ -613,8 +605,8 @@ async def analyze_logs(request: LogAnalysisRequest):
             data=None
         )
 
-@app.post("/analyze-logs/upload", response_model=APIResponse)
-async def analyze_logs_upload(file: UploadFile = File(...)):
+@app.post("/agent/analyze-logs/upload", response_model=APIResponse)
+async def analyze_logs_upload(file: UploadFile = File(...), language_code: Optional[str] = 'zh'):
     """
     Analyze logs with file upload support
     This endpoint allows clients to upload log files for analysis. It checks the file
@@ -628,7 +620,14 @@ async def analyze_logs_upload(file: UploadFile = File(...)):
     Returns:
         APIResponse: A standardized response indicating success or failure of the upload and analysis
     """
-     # Check file extension
+    # Validate the language code
+    if language_code not in ['zh', 'en']:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid report language specified. Supported languages are 'zh' (Traditional Chinese) and 'en' (English)."
+        )
+    
+    # Check file extension
     allowed_extensions = ['.txt', '.csv', '.json', '.log']
     file_extension = Path(file.filename).suffix.lower()
     
@@ -659,7 +658,7 @@ async def analyze_logs_upload(file: UploadFile = File(...)):
         return {
             "success": True,
             "message": "Log analysis started",
-            "data": _analyze_logs(logs)
+            "data": _analyze_logs(logs, language_code=language_code)
         }
     except Exception as e:
         # Catch and handle exceptions, making sure to include the original error message
@@ -667,7 +666,7 @@ async def analyze_logs_upload(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
 
 if __name__ == "__main__":
-    uvicorn.run("agent:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("agent:app", host="0.0.0.0", port=8000)
 
 # ============================================================================
 # Curl Testing Script
@@ -676,25 +675,25 @@ if __name__ == "__main__":
 # You can copy these commands and run them in a terminal to test the API
 #
 # 1. Health Check - Verify API is running and check available models
-# curl -X GET http://localhost:8000/health
+# curl -X GET http://localhost:8000/agent/health
 #
 # 2. List Models - Get all available LLM models
-# curl -X GET http://localhost:8000/models
+# curl -X GET http://localhost:8000/agent/models
 #
 # 3. Switch Model - Change to a different LLM model (example: switch to gemini)
-# curl -X POST http://localhost:8000/switch-model \
+# curl -X POST http://localhost:8000/agent/switch-model \
 #     -H "Content-Type: application/json" \
 #     -d '{"model_type": "gemini"}'
 #
 # 4. Analyze Logs - Send logs for analysis with default model
-# curl -X POST http://localhost:8000/analyze-logs \
+# curl -X POST http://localhost:8000/agent/analyze-logs \
 #     -H "Content-Type: application/json" \
 #     -d '{
 #         "logs": "2024-07-31T10:15:22.123Z ERROR [auth-service] Failed login attempt for user admin from IP 192.168.1.100 - Invalid password (attempt 5 of 5)"
 #     }'
 #
 # 5. Analyze Logs with Qdrant Similarity - Include Qdrant similarity search in the analysis
-# curl -X POST http://localhost:8000/analyze-logs \
+# curl -X POST http://localhost:8000/agent/analyze-logs \
 #     -H "Content-Type: application/json" \
 #     -d '{
 #         "logs": "2024-07-31T10:15:22.123Z ERROR [auth-service] Failed login attempt for user admin from IP 192.168.1.100 - Invalid password (attempt 5 of 5)",
