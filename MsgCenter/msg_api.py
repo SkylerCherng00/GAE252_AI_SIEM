@@ -27,6 +27,7 @@ CONFIG_DIR = os.path.join(CURRENT_DIR, "config")
 CONFIG_EMBED_PATH = os.path.join(CONFIG_DIR, "config_embed.ini")
 CONFIG_FACTORY_PATH = os.path.join(CONFIG_DIR, "config_factory.ini")
 CONFIG_MONGODB_PATH = os.path.join(CONFIG_DIR, "config_mongodb.ini")
+CONFIG_RAP_PATH = os.path.join(CONFIG_DIR, "config_rpa.ini")
 
 # Pydantic models for response schemas
 class ConfigResponse(BaseModel):
@@ -207,6 +208,38 @@ async def get_config_mongodb():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading mongodb configuration: {str(e)}")
+
+@app.get("/config/config_rpa", response_model=AllConfigResponse)
+async def get_config_rpa():
+    """
+    Get RPA configuration from the configuration file
+    
+    Returns:
+        AllConfigResponse with RPA configuration from config_rap.ini
+    
+    Example Response:
+        {
+            "filename": "config_rpa.ini",
+            "configs": {
+                "SLACK": {
+                    "api_key": "your-rap-api-key",
+                },
+
+            }
+        }
+    
+    Raises:
+        HTTPException: If there's an error loading the configuration
+    """
+    try:
+        config = _load_config(CONFIG_RAP_PATH)
+        print(config)
+        return {
+            "filename": "config_rap.ini",
+            "configs": _config_to_dict(config)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading RAP configuration: {str(e)}")
 
 @app.put("/config/config_embed", response_model=AllConfigResponse, status_code=status.HTTP_200_OK)
 async def update_config_embed(request: AllConfigUpdateRequest):
