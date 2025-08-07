@@ -1,0 +1,1 @@
+endpoint_url = "http://localhost:10000/config/"
