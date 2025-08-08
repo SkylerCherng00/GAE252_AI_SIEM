@@ -14,7 +14,7 @@ load_dotenv()
 def get_slack_token_from_api() -> str:
     """從 API 取得 SLACK_BOT_TOKEN"""
     try:
-        response = requests.get("http://0.0.0.0:10000/config/config_rpa")
+        response = requests.get("http://localhost:10000/config/config_rpa")
         response.raise_for_status()
         config_data = response.json()
         return config_data["configs"]["Slack"]["slack_bot_token"]

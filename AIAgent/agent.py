@@ -453,6 +453,7 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
         # The invoke method expects a dict with the 'input' key
         agent_reply = rag_chain.invoke({"input": condition, "lang": language_code})
         result = agent_reply.get('answer', 'No answer found') # string
+        # print(f"QRT response: {result}\n")
 
         # The result will be a dict with an "answer" key containing the processed response
         # print(f"Agent reply input: {agent_reply.get('input', 'Non input found')}\n")
@@ -462,7 +463,15 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
 
         # Write the QRT response to MongoDB
         result_json = json.loads(result)
+
+        # Send the QRT response to the RPA endpoint
+        import requests
+        from utils.endpoint import endpoint_rpa_url
+        requests.post(endpoint_rpa_url, json=result_json)
+            
+        # Add timestamp to the result JSON and write to MongoDB
         result_json['timestamp'] = timestamp
+        # print(f"QRT response JSON: {result_json}\n")
         _write_to_mongodb(collection_name='QRTResults', data=result_json)
 
         return None
