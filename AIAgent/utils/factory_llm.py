@@ -321,7 +321,6 @@ if __name__ == "__main__":
     
     # Get available executors first
     available_executors = factory.get_available_executors()
-    print(f"Available executors: {available_executors}")
     
     # Get the first available executor
     # executor = factory.create_executor(executor_type='ollama')
