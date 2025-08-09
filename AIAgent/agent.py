@@ -481,6 +481,7 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
 
         # Write the QRT response to MongoDB
         result_json = json.loads(result)
+        result_json['short_report'] += f"\n*Report ID:* {report_id}\n" if language_code == 'en' else f"\n*報告 ID:* {report_id}\n"
 
         # Send the QRT response to the RPA endpoint
         print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Sending QRT response to RPA endpoint...")
@@ -490,7 +491,6 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
             
         # Add timestamp to the result JSON and write to MongoDB
         result_json['timestamp'] = timestamp
-        result_json['short_report'] += f"\n*Report ID:* {report_id}\n" if language_code == 'en' else f"\n*報告 ID:* {report_id}\n"
         # print(f"QRT response JSON: {result_json}\n")
         print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Starting to write QRT response to MongoDB...")
         _write_to_mongodb(collection_name='QRTResults', data=result_json)
