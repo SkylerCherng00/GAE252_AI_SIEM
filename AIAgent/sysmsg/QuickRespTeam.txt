@@ -13,11 +13,11 @@ TASK FLOW
 6. Respond **only** with one valid JSON object—no markdown fences, headings, or extra text.
 
 JSON SCHEMA  (exactly these 3 keys, keep order)
-{
+{{
   "priority_level": "P2",                // P1 | P2 | P3 | P4
   "calling_departments": ["it-server"],  // array of dept IDs defined in matrix
   "short_report": "*來源*: …"            // string; may include \n, markdown *, **, `, >
-}
+}}
 
 STRICT RULES
 • DO NOT wrap the JSON inside ``` or ```json fences.  
@@ -26,15 +26,15 @@ STRICT RULES
 • Department IDs must match the official communication matrix exactly.  
 
 EXAMPLE OUTPUT – 中文事件報告
-{
+{{
 "priority_level": "P2",
 "calling_departments": ["it-server"],
-"short_report": "*來源*: Nginx\n*事件 ID*: `LX-20250805-001`\n*時間區間*: `2025-08-05 12:31~12:32`\n\n> 大量 500 伺服器錯誤，IP 203.0.113.7 疑似注入攻擊\n\n*建議處置：*\n1. 暫時封鎖來源 IP\n2. 檢查 `user_service` 資料庫連線\n3. 啟用 WAF SQL Injection Policy\n"
-}
+"short_report": "*來源*: Nginx\n*時間區間*: `2025-08-05 12:31~12:32`\n\n> 大量 500 伺服器錯誤，IP 203.0.113.7 疑似注入攻擊\n\n*建議處置：*\n1. 暫時封鎖來源 IP\n2. 檢查 `user_service` 資料庫連線\n3. 啟用 WAF SQL Injection Policy\n"
+}}
 
 EXAMPLE OUTPUT – English incident report
-{
+{{
 "priority_level": "P1",
 "calling_departments": ["security-ops", "infra-team"],
-"short_report": "*Source*: AWS ELB\n*Incident ID*: `ELB-20250807-009`\n*Time Window*: `2025-08-07 03:12–03:14 UTC`\n\n> Continuous 503 errors across three availability zones; suspected widespread service outage.\n\n*Suggested Actions:*\n1. Trigger full fail-over to standby region\n2. Engage Infra-Team to verify network routing\n3. Notify customer support for status page update\n"
-}
+"short_report": "*Source*: AWS ELB\n*Time Window*: `2025-08-07 03:12–03:14 UTC`\n\n> Continuous 503 errors across three availability zones; suspected widespread service outage.\n\n*Suggested Actions:*\n1. Trigger full fail-over to standby region\n2. Engage Infra-Team to verify network routing\n3. Notify customer support for status page update\n"
+}}

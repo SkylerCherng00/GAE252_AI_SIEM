@@ -10,6 +10,7 @@ app = FastAPI(
     title="Message Center API",
     description="API for accessing configuration information for the AI SIEM system",
     version="1.0.0",
+    docs_url=None
 )
 
 # Add CORS middleware to allow cross-origin requests

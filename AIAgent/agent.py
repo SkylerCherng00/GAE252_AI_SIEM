@@ -340,6 +340,7 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         str: The analysis results from the LLM.
     '''
     try:
+        print(f"Analyzing logs with language code: {language_code}")
         # Preview the logs before analysis
         preview_prompt = ChatPromptTemplate.from_messages([
             SystemMessage(APP_STATE.sysmsg_logpreviewer),
@@ -372,14 +373,17 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         
         # The invoke method expects a dict with the 'input' key
         agent_reply = rag_chain.invoke({"input": preview_result.content, "lang": language_code})
-        result = agent_reply.get('answer', 'No answer found')
+        result = agent_reply.get('answer', 'No answer found').strip('`json')
+        print(f"Complete Log analysis")
         # print(f"Log analysis result: {result}\n")
 
         # Write the analysis result to MongoDB
         result_json = json.loads(result)
         timestamp_float = datetime.datetime.now().timestamp()
         result_json['timestamp'] = timestamp_float
+        print(f"Log analysis result timestamp {timestamp_float}")
         # print(f"Log analysis result: {result_json}\n")
+        print("Starting to write log analysis result to MongoDB...")
         _write_to_mongodb(collection_name='LogAnalysisResults', data=result_json)
         
         # The result will be a dict with an "answer" key containing the processed response
@@ -391,6 +395,7 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
 
         # Launch the Quick Response Team (QRT) execution in a separate thread
+        print("Launching QRT execution...")
         global lock
         lock = threading.Lock() 
         qrt = threading.Thread(target=_launch_qrt, args=(result, language_code, timestamp_float))
@@ -420,6 +425,7 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
     '''
     try:
         lock.acquire()  # Ensure thread safety when accessing shared resources
+        print("Starting QRT execution...")
         
         # Integrate with Qdrant for similarity search if a collection is specified
         # Create a chat prompt template for the agent
@@ -452,7 +458,8 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
         
         # The invoke method expects a dict with the 'input' key
         agent_reply = rag_chain.invoke({"input": condition, "lang": language_code})
-        result = agent_reply.get('answer', 'No answer found') # string
+        result = agent_reply.get('answer', 'No answer found').strip('`json') # string
+        print(f"Complete QRT execution")
         # print(f"QRT response: {result}\n")
 
         # The result will be a dict with an "answer" key containing the processed response
@@ -465,6 +472,7 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
         result_json = json.loads(result)
 
         # Send the QRT response to the RPA endpoint
+        print("Sending QRT response to RPA endpoint...")
         import requests
         from utils.endpoint import endpoint_rpa_url
         requests.post(endpoint_rpa_url, json=result_json)
@@ -472,8 +480,9 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
         # Add timestamp to the result JSON and write to MongoDB
         result_json['timestamp'] = timestamp
         # print(f"QRT response JSON: {result_json}\n")
+        print("Starting to write QRT response to MongoDB...")
         _write_to_mongodb(collection_name='QRTResults', data=result_json)
-
+        
         return None
     except json.JSONDecodeError as e:
         raise HTTPException(
