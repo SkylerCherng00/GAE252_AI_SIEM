@@ -1,9 +1,7 @@
-import os
 import requests
 import argparse
 from pathlib import Path
-import json
-from typing import List, Optional
+from typing import List
 
 class LogAnalyzer:
     """

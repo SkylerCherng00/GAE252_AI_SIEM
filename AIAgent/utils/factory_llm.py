@@ -1,7 +1,7 @@
 import requests
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
-from .endpoint import endpoint_url
+from .endpoint import endpoint_url, get_timestamp
 
 # HTTP Endpoint
 CONFIG_FACTORY_URL = endpoint_url + "config_factory"
@@ -43,7 +43,7 @@ class OllamaExecutor(LLMExecutor):
                 temperature=0
             )
         except Exception as e:
-            print(f"Error initializing Ollama LLM: {str(e)}")
+            print(f"{get_timestamp()} - ERROR - factory_llm.py OllamaExecutor._initialize_llm() - Error initializing Ollama LLM: {str(e)}")
             self._llm = None
     
     def get_model(self, **kwargs):
@@ -62,12 +62,12 @@ class OllamaExecutor(LLMExecutor):
             llm = self.get_model(**kwargs)
             
             if not llm:
-                return "Failed to initialize Ollama LLM"
+                return f"{get_timestamp()} - ERROR - factory_llm.py OllamaExecutor.generate_response() - Failed to initialize Ollama LLM"
                 
             response = llm.invoke(prompt)
             return response
         except Exception as e:
-            return f"Error generating response from Ollama: {str(e)}"
+            return f"{get_timestamp()} - ERROR - factory_llm.py OllamaExecutor.generate_response() - Error generating response from Ollama: {str(e)}"
     
     def is_available(self) -> bool:
         try:
@@ -96,7 +96,7 @@ class GeminiExecutor(LLMExecutor):
                 temperature=0                
             )
         except Exception as e:
-            print(f"Error initializing Gemini LLM: {str(e)}")
+            print(f"{get_timestamp()} - ERROR - factory_llm.py GeminiExecutor._initialize_llm() - Error initializing Gemini LLM: {str(e)}")
             self._llm = None
     
     def get_model(self, **kwargs):
@@ -115,14 +115,14 @@ class GeminiExecutor(LLMExecutor):
             llm = self.get_model(**kwargs)
             
             if not llm:
-                return "Failed to initialize Gemini LLM"
+                return f"{get_timestamp()} - ERROR - factory_llm.py GeminiExecutor.generate_response() - Failed to initialize Gemini LLM"
                 
             from langchain.schema import HumanMessage
             
             response = llm.invoke([HumanMessage(content=prompt)])
             return response.content
         except Exception as e:
-            return f"Error generating response from Gemini: {str(e)}"
+            return f"{get_timestamp()} - ERROR - factory_llm.py GeminiExecutor.generate_response() - Error generating response from Gemini: {str(e)}"
     
     def is_available(self) -> bool:
         return bool(self.api_key)
@@ -151,7 +151,7 @@ class AzureOpenAIExecutor(LLMExecutor):
                 max_retries=3
             )
         except Exception as e:
-            print(f"Error initializing Azure OpenAI LLM: {str(e)}")
+            print(f"{get_timestamp()} - ERROR - factory_llm.py AzureOpenAIExecutor._initialize_llm() - Error initializing Azure OpenAI LLM: {str(e)}")
             self._llm = None
     
     def get_model(self, **kwargs):
@@ -170,14 +170,14 @@ class AzureOpenAIExecutor(LLMExecutor):
             llm = self.get_model(**kwargs)
             
             if not llm:
-                return "Failed to initialize Azure OpenAI LLM"
+                return f"{get_timestamp()} - ERROR - factory_llm.py AzureOpenAIExecutor.generate_response() - Failed to initialize Azure OpenAI LLM"
                 
             from langchain.schema import HumanMessage
             
             response = llm.invoke([HumanMessage(content=prompt)])
             return response.content
         except Exception as e:
-            return f"Error generating response from Azure OpenAI: {str(e)}"
+            return f"{get_timestamp()} - ERROR - factory_llm.py AzureOpenAIExecutor.generate_response() - Error generating response from Azure OpenAI: {str(e)}"
     
     def is_available(self) -> bool:
         return bool(self.api_key and self.endpoint)
@@ -213,12 +213,12 @@ class LLMExecutorFactory:
             response = requests.get(CONFIG_FACTORY_URL, timeout=3)
             if response.status_code == 200:
                 self.config = response.json().get('configs')
-                print(f"✅ Configuration loaded from API: {CONFIG_FACTORY_URL}")
+                print(f"{get_timestamp()} - INFO - factory_llm.py LLMExecutorFactory.__init__() - Configuration loaded from API: {CONFIG_FACTORY_URL}")
                 
             else:
-                print(f"❌ Failed to fetch configuration from API: {response.status_code}")
+                print(f"{get_timestamp()} - ERROR - factory_llm.py LLMExecutorFactory.__init__() - Failed to fetch configuration from API: {response.status_code}")
         except Exception as e:
-            print(f"❌ Error fetching configuration from API: {e}")
+            print(f"{get_timestamp()} - ERROR - factory_llm.py LLMExecutorFactory.__init__() - Error fetching configuration from API: {e}")
 
         # Default executor to use if available
         self.default_executor = 'ollama'
@@ -328,15 +328,15 @@ if __name__ == "__main__":
     executor = factory.create_executor(executor_type='azure')
     
     if executor is None:
-        print("No executor could be created. Please check your configuration.")
-        print("Make sure at least one LLM service is properly configured and available.")
+        print(f"{get_timestamp()} - ERROR - factory_llm.py __main__ - No executor could be created. Please check your configuration.")
+        print(f"{get_timestamp()} - INFO - factory_llm.py __main__ - Make sure at least one LLM service is properly configured and available.")
         # Try to create any available executor
         executor = factory.create_executor('auto')
         
     if executor is not None:
         # Get the underlying model object
         model = executor.get_model()
-        print(f"Model type: {type(model).__name__}")
+        print(f"{get_timestamp()} - INFO - factory_llm.py __main__ - Model type: {type(model).__name__}")
 
         # Example usage with a prompt
         from langchain.prompts import PromptTemplate
@@ -345,7 +345,7 @@ if __name__ == "__main__":
         )
         chain = prompt_template | model 
         output = chain.invoke({"obj":"城市"})
-        print(f"Output: {output}")
+        print(f"{get_timestamp()} - INFO - factory_llm.py __main__ - Output: {output}")
         
         # You can now work directly with the model object
         # For example, with AzureChatOpenAI:
@@ -355,6 +355,6 @@ if __name__ == "__main__":
         
         # Or use the generate_response method
         response = executor.generate_response("What is the capital of France?")
-        print(f"Response: {response}")
+        print(f"{get_timestamp()} - INFO - factory_llm.py __main__ - Response: {response}")
     else:
-        print("Error: No LLM executor is available. Please check your configuration and ensure at least one service is running.")
+        print(f"{get_timestamp()} - ERROR - factory_llm.py __main__ - Error: No LLM executor is available. Please check your configuration and ensure at least one service is running.")

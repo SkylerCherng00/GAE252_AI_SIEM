@@ -19,9 +19,11 @@ import os
 # Change the working directory to the project root
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+from utils.endpoint import get_timestamp
 from utils.factory_llm import LLMExecutorFactory, LLMExecutor
 from utils.factory_embedding import EmbeddingModelFactory, EmbeddingModel
 from utils.util_mongodb import MongoDBHandler
+from utils.factory_reportid import ReportIDFactory
 
 # Application state management
 class AppState:
@@ -38,6 +40,7 @@ class AppState:
         sysmsg_qrt: System prompt for quick response team execution
         llm: The current LLM executor instance used for analysis tasks
         mongo_handler: MongoDB handler instance for database operations
+        report_id_factory: Singleton instance of ReportIDFactory for generating report IDs
     """
     def __init__(self):
         self.factory_llm: None = None
@@ -49,6 +52,7 @@ class AppState:
         self.sysmsg_qrt: str | None = None
         self.llm: None = None
         self.mongo_handler: None = None
+        self.report_id_factory: ReportIDFactory = ReportIDFactory()
 APP_STATE = AppState()
 
 @asynccontextmanager
@@ -103,25 +107,30 @@ async def lifespan(app: FastAPI):
         APP_STATE.sysmsg_logpreviewer = _load_system_message(sysmsg_LogPreviewer)
         APP_STATE.sysmsg_loganalyzer = _load_system_message(sysmsg_LoganAlyzer)
         APP_STATE.sysmsg_qrt = _load_system_message(sysmsg_QRT)
-        print("System prompt messages loaded.")
+        print(f"{get_timestamp()} - INFO - agent.py lifespan() - System prompt messages loaded.")
     except Exception as e:
-        print(f"Error: Failed to load system prompt messages: {e}")
+        print(f"{get_timestamp()} - ERROR - agent.py lifespan() - Failed to load system prompt messages: {e}")
         raise RuntimeError("Failed to load system prompt messages, application cannot start.") from e
         
     # Initialize LLM for analysis tasks
     # Get the executor and then get the actual LangChain model from it
     APP_STATE.llm = _get_executor(APP_STATE.current_executor_type).get_model()
-    print("Agent executors initialized.")
+    print(f"{get_timestamp()} - INFO - agent.py lifespan() - Agent executors initialized.")
 
     # Initialize MongoDB handler
     APP_STATE.mongo_handler = MongoDBHandler()  # Initialize MongoDB handler
-    print("MongoDB handler initialized.")
+    print(f"{get_timestamp()} - INFO - agent.py lifespan() - MongoDB handler initialized.")
+
+    # Initialize ReportIDFactory
+    APP_STATE.report_id_factory = ReportIDFactory(APP_STATE.mongo_handler)
+    print(f"{get_timestamp()} - INFO - agent.py lifespan() - ReportIDFactory initialized.")
+
     yield
 
 # Initialize FastAPI application with metadata
 app = FastAPI(title="AI SIEM Log Analysis API", 
               description="API for analyzing logs using different LLM models", 
-              version="1.0.2",
+              version="1.0.3",
               lifespan=lifespan)
 
 app.add_middleware(
@@ -312,20 +321,20 @@ def _write_to_mongodb(collection_name: str, data: Union[Dict[str, Any], List[Dic
     try:
         # Ensure the collection exists
         if not APP_STATE.mongo_handler.create_collection(collection_name):
-            print(f"Failed to create or verify collection: {collection_name}")
+            print(f"{get_timestamp()} - ERROR - agent.py _write_to_mongodb() - Failed to create or verify collection: {collection_name}")
             return False
         
         # Insert the data
         result = APP_STATE.mongo_handler.insert_data(collection_name, data)
         
         if result:
-            print(f"Successfully wrote data to MongoDB collection: {collection_name}")
+            print(f"{get_timestamp()} - INFO - agent.py _write_to_mongodb() - Successfully wrote data to MongoDB collection: {collection_name}")
         else:
-            print(f"Failed to write data to MongoDB collection: {collection_name}")
+            print(f"{get_timestamp()} - ERROR - agent.py _write_to_mongodb() - Failed to write data to MongoDB collection: {collection_name}")
             
         return result
     except Exception as e:
-        print(f"Error writing to MongoDB: {str(e)}")
+        print(f"{get_timestamp()} - ERROR - agent.py _write_to_mongodb() - Error writing to MongoDB: {str(e)}")
         return False
 
 def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria", top_k: Optional[int] = 5, language_code: Optional[str] = 'zh') -> str:
@@ -340,7 +349,7 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         str: The analysis results from the LLM.
     '''
     try:
-        print(f"Analyzing logs with language code: {language_code}")
+        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Analyzing logs with language code: {language_code}")
         # Preview the logs before analysis
         preview_prompt = ChatPromptTemplate.from_messages([
             SystemMessage(APP_STATE.sysmsg_logpreviewer),
@@ -374,16 +383,18 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         # The invoke method expects a dict with the 'input' key
         agent_reply = rag_chain.invoke({"input": preview_result.content, "lang": language_code})
         result = agent_reply.get('answer', 'No answer found').strip('`json')
-        print(f"Complete Log analysis")
+        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Complete Log analysis")
         # print(f"Log analysis result: {result}\n")
 
         # Write the analysis result to MongoDB
         result_json = json.loads(result)
         timestamp_float = datetime.datetime.now().timestamp()
         result_json['timestamp'] = timestamp_float
-        print(f"Log analysis result timestamp {timestamp_float}")
+        report_id = APP_STATE.report_id_factory.generate_report_id()
+        result_json['report_id'] = report_id
+        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Log analysis result timestamp {timestamp_float}")
         # print(f"Log analysis result: {result_json}\n")
-        print("Starting to write log analysis result to MongoDB...")
+        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Starting to write log analysis result to MongoDB...")
         _write_to_mongodb(collection_name='LogAnalysisResults', data=result_json)
         
         # The result will be a dict with an "answer" key containing the processed response
@@ -395,10 +406,10 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
 
         # Launch the Quick Response Team (QRT) execution in a separate thread
-        print("Launching QRT execution...")
+        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Launching QRT execution...")
         global lock
         lock = threading.Lock() 
-        qrt = threading.Thread(target=_launch_qrt, args=(result, language_code, timestamp_float))
+        qrt = threading.Thread(target=_launch_qrt, args=(result, language_code, timestamp_float, report_id))
         qrt.start()  # Start the QRT thread to handle quick response team execution
         
         # Return just the answer string, not the whole dict
@@ -414,7 +425,7 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
             detail=f"Failed to analyze logs: {str(e)}"
         )
 
-def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp : float = .0) -> None:
+def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp : float = .0, report_id: Optional[str] = '') -> None:
     '''
     Launch the Quick Response Team (QRT) execution based on the provided condition.
     Args:
@@ -425,7 +436,7 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
     '''
     try:
         lock.acquire()  # Ensure thread safety when accessing shared resources
-        print("Starting QRT execution...")
+        print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Starting QRT execution...")
         
         # Integrate with Qdrant for similarity search if a collection is specified
         # Create a chat prompt template for the agent
@@ -459,7 +470,7 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
         # The invoke method expects a dict with the 'input' key
         agent_reply = rag_chain.invoke({"input": condition, "lang": language_code})
         result = agent_reply.get('answer', 'No answer found').strip('`json') # string
-        print(f"Complete QRT execution")
+        # print(f"Complete QRT execution")
         # print(f"QRT response: {result}\n")
 
         # The result will be a dict with an "answer" key containing the processed response
@@ -472,15 +483,16 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
         result_json = json.loads(result)
 
         # Send the QRT response to the RPA endpoint
-        print("Sending QRT response to RPA endpoint...")
+        print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Sending QRT response to RPA endpoint...")
         import requests
         from utils.endpoint import endpoint_rpa_url
         requests.post(endpoint_rpa_url, json=result_json)
             
         # Add timestamp to the result JSON and write to MongoDB
         result_json['timestamp'] = timestamp
+        result_json['short_report'] += f"\n*Report ID:* {report_id}\n" if language_code == 'en' else f"\n*報告 ID:* {report_id}\n"
         # print(f"QRT response JSON: {result_json}\n")
-        print("Starting to write QRT response to MongoDB...")
+        print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Starting to write QRT response to MongoDB...")
         _write_to_mongodb(collection_name='QRTResults', data=result_json)
         
         return None
@@ -680,7 +692,7 @@ async def analyze_logs_upload(file: UploadFile = File(...), language_code: Optio
         
         # Save file to docs directory
         file_path = docs_dir / file.filename
-        print(f"Saving file to: {file_path}")
+        print(f"{get_timestamp()} - INFO - agent.py analyze_logs_upload() - Saving file to: {file_path}")
         
         # The crucial step: write the contents of the UploadFile to the new file
         # Using a sync operation with a thread pool to avoid blocking the event loop
