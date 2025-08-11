@@ -114,14 +114,14 @@ def build_docker_containers():
     """Build and start docker containers using docker-compose."""
     try:
         print("Building and starting Docker containers...")
-        subprocess.run(["docker-compose", "up", "--build", "-d"], check=True)
+        subprocess.run(["docker", "compose", "up", "--build", "-d"], check=True)
         print("Docker containers built and started successfully.")
         return True
     except subprocess.CalledProcessError as e:
         print(f"Error building Docker containers: {str(e)}")
         return False
-    except FileNotFoundError:
-        print("Docker or docker-compose not found. Please ensure Docker Desktop is installed and running.")
+    except FileNotFoundError as e:
+        print(f"Docker or docker compose not found. Please ensure Docker Desktop is installed and running. Error Message: {e}")
         return False
 
 def check_cloud_cli(cloud_provider):
