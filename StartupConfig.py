@@ -186,6 +186,26 @@ def validate_mongodb_config(config):
     
     return issues
 
+def validate_rpa_config(config):
+    """Validate RPA configuration."""
+    issues = []
+    
+    # Check if at least one messaging platform is configured
+    slack_token = config.get('Slack', 'SLACK_BOT_TOKEN', fallback='')
+    teams_token = config.get('Teams', 'TEAMS_BOT_TOKEN', fallback='')
+    
+    if not slack_token and not teams_token:
+        issues.append("At least one messaging platform (Slack or Teams) should be configured")
+    
+    # Validate tokens if provided
+    if slack_token and slack_token == 'your_slack_bot_token_here':
+        issues.append("Please provide a valid Slack bot token")
+        
+    if teams_token and teams_token == 'your_teams_bot_token_here':
+        issues.append("Please provide a valid Teams bot token")
+    
+    return issues
+
 def configure_file(template_path, output_path, validator_func):
     """Configure a single file based on its template."""
     if not os.path.exists(template_path):
@@ -363,6 +383,122 @@ def initialize_qdrant():
         input("\nPress Enter to continue...")
         return False
 
+def manual_configuration():
+    """Guide user to manually copy and modify configuration templates."""
+    clear_screen()
+    print_header("Manual Configuration")
+    
+    print("This option helps you manually create configuration files from templates.")
+    print("You will need to copy the template files to the config directory and modify them.")
+    
+    # List all available template files
+    print("\nAvailable configuration templates:")
+    for i, template in enumerate(os.listdir(CONFIG_TEMPLATE_DIR), 1):
+        if template.endswith('.example'):
+            print(f"{i}. {template}")
+    
+    print("\nFollow these steps to complete the configuration:")
+    print("1. Copy the template files from the ConfigTemplate directory to MsgCenter/config")
+    print("2. Open each file and modify the settings according to your environment")
+    
+    # Show paths
+    print(f"\nTemplate directory: {CONFIG_TEMPLATE_DIR}")
+    print(f"Target directory: {TARGET_CONFIG_DIR}")
+    
+    # Check if config directory exists, create if not
+    if not os.path.exists(TARGET_CONFIG_DIR):
+        os.makedirs(TARGET_CONFIG_DIR, exist_ok=True)
+        print("\nTarget directory created.")
+    
+    # Check if config directory is not empty
+    existing_configs = []
+    if os.path.exists(TARGET_CONFIG_DIR):
+        existing_configs = [f for f in os.listdir(TARGET_CONFIG_DIR) if f.endswith('.ini')]
+        if existing_configs:
+            print("\nWarning: The following configuration files already exist:")
+            for i, config_file in enumerate(existing_configs, 1):
+                print(f"{i}. {config_file}")
+            print("\nProceeding with copy might overwrite these files.")
+    
+    # Provide options to help with copying
+    print("\nWould you like help with copying the template files?")
+    print("1. Copy all template files to config directory")
+    print("2. Copy specific template file")
+    print("3. Return to main menu")
+    
+    choice = input("\nEnter your choice (1-3): ")
+    
+    if choice == '1':
+        # Copy all template files
+        if existing_configs:
+            overwrite = input("\nOverwrite existing configuration files? (y/n): ").lower()
+            if overwrite != 'y':
+                print("\nCopy operation cancelled.")
+                input("\nPress Enter to continue...")
+                return
+        
+        copied = 0
+        for file in os.listdir(CONFIG_TEMPLATE_DIR):
+            if file.endswith('.example'):
+                src = os.path.join(CONFIG_TEMPLATE_DIR, file)
+                # Create destination path with .ini extension (removing .example)
+                dst_name = file.replace('.example', '')
+                dst = os.path.join(TARGET_CONFIG_DIR, dst_name)
+                
+                # Check if file exists
+                if os.path.exists(dst) and not (existing_configs and overwrite == 'y'):
+                    print(f"Skipping: {dst_name} (already exists)")
+                    continue
+                
+                try:
+                    shutil.copy2(src, dst)
+                    copied += 1
+                    print(f"Copied and renamed: {file} -> {dst_name}")
+                except Exception as e:
+                    print(f"Error copying {file}: {e}")
+        
+        print(f"\n{copied} files copied to {TARGET_CONFIG_DIR}")
+        print("Please edit these files to configure your settings.")
+        
+    elif choice == '2':
+        # Copy specific file
+        print("\nSelect a template file to copy:")
+        templates = [f for f in os.listdir(CONFIG_TEMPLATE_DIR) if f.endswith('.example')]
+        for i, template in enumerate(templates, 1):
+            print(f"{i}. {template}")
+        
+        try:
+            file_choice = int(input("\nEnter file number: "))
+            if 1 <= file_choice <= len(templates):
+                selected_file = templates[file_choice - 1]
+                src = os.path.join(CONFIG_TEMPLATE_DIR, selected_file)
+                
+                # Create destination path with .ini extension (removing .example)
+                dst_name = selected_file.replace('.example', '')
+                dst = os.path.join(TARGET_CONFIG_DIR, dst_name)
+                
+                # Check if file exists
+                if os.path.exists(dst):
+                    overwrite = input(f"\n{dst_name} already exists. Overwrite? (y/n): ").lower()
+                    if overwrite != 'y':
+                        print("\nCopy operation cancelled.")
+                        input("\nPress Enter to continue...")
+                        return
+                
+                try:
+                    shutil.copy2(src, dst)
+                    print(f"\nCopied and renamed: {selected_file} -> {dst_name}")
+                    print(f"File saved to: {dst}")
+                    print("Please edit this file to configure your settings.")
+                except Exception as e:
+                    print(f"Error copying {selected_file}: {e}")
+            else:
+                print("Invalid selection.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+    
+    input("\nPress Enter to continue...")
+
 def main():
     clear_screen()
     print_header("GAE252 AI SIEM Configuration Setup")
@@ -373,14 +509,18 @@ def main():
     print("\nWhat would you like to do?")
     print("1. Configure all components")
     print("2. Initialize Qdrant database")
-    print("3. Exit")
+    print("3. Manual configuration (copy templates to config folder)")
+    print("4. Exit")
     
-    choice = input("\nEnter your choice (1-3): ")
+    choice = input("\nEnter your choice (1-4): ")
     
     if choice == '2':
         initialize_qdrant()
         return
     elif choice == '3':
+        manual_configuration()
+        return
+    elif choice == '4':
         clear_screen()
         print_header("Setup Cancelled")
         print("Thank you for using the GAE252 AI SIEM Configuration Utility.")
@@ -404,6 +544,11 @@ def main():
             CONFIG_TEMPLATE_DIR / "config_mongodb.ini.example",
             TARGET_CONFIG_DIR / "config_mongodb.ini",
             validate_mongodb_config
+        ),
+        (
+            CONFIG_TEMPLATE_DIR / "config_rpa.ini.example",
+            TARGET_CONFIG_DIR / "config_rpa.ini",
+            validate_rpa_config
         )
     ]
     
@@ -429,9 +574,10 @@ def main():
     print("\nWhat would you like to do next?")
     print("1. Review all configurations")
     print("2. Initialize Qdrant database")
-    print("3. Exit")
+    print("3. Manual configuration (copy templates to config folder)")
+    print("4. Exit")
     
-    choice = input("\nEnter your choice (1-3): ")
+    choice = input("\nEnter your choice (1-4): ")
     
     if choice == '1':
         for _, output_path, _ in configs:
@@ -445,6 +591,8 @@ def main():
                 input("\nPress Enter to continue...")
     elif choice == '2':
         initialize_qdrant()
+    elif choice == '3':
+        manual_configuration()
     
     clear_screen()
     print_header("Setup Complete")

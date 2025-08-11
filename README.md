@@ -8,7 +8,7 @@
 - Install packages according to requirement.txt
   - `pip install -r requirement.txt`
 - Set up configuration and vector database
-  - Run `python startup.py` provided two features:
+  - Run `python StartupConfig.py` provided two features:
     - to generate `config.ini` from `config.ini.template`
     - to create tables in vector database from the `src` in Qrant folder
 - Run `msg_api.py` in MsgCenter first

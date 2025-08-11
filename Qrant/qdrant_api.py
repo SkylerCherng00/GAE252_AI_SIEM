@@ -555,4 +555,4 @@ async def list_files(directory: str = Query(default="docs", enum=["src", "docs"]
         raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=10009)

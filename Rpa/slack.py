@@ -6,15 +6,13 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from dotenv import load_dotenv
 
-# 載入環境變數
-load_dotenv()
+from endpoint import endpoint_url
 
 def get_slack_token_from_api() -> str:
     """從 API 取得 SLACK_BOT_TOKEN"""
     try:
-        response = requests.get("http://localhost:10000/config/config_rpa")
+        response = requests.get(endpoint_url)
         response.raise_for_status()
         config_data = response.json()
         return config_data["configs"]["Slack"]["slack_bot_token"]
@@ -68,17 +66,6 @@ async def post_to_slack(channel_id: str, text: str):
         logging.error("chat.postMessage 失敗: %s", e.response["error"])
         raise
 
-
-def _list_channels():
-    client = get_slack_client()
-    try:
-        response = client.conversations_list(limit=1000)
-        channels = [{"name": ch["name"], "id": ch["id"]} for ch in response["channels"]]
-        return {"channels": channels}
-    except SlackApiError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # --------- API 端點 ---------
 
 @app.post("/alert")
@@ -125,7 +112,7 @@ async def alert(request: AlertReq):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=12000)
+    uvicorn.run(app, host="0.0.0.0", port=10002)
     # 測試列出頻道
     # try:
     #     response = client.conversations_list(limit=1000)
