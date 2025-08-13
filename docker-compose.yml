@@ -7,15 +7,13 @@ services:
       dockerfile: dockerfile
       tags:
         - ai_siem/msgcenter_image:1.0.0
-    # ports:
-    #   - "10000:10000"
     networks:
       - ai_siem-network
     restart: always
     deploy:
       resources:
         limits:
-          cpus: '0.15'
+          cpus: '0.1'
           memory: 100M
 
   agent:
@@ -32,12 +30,14 @@ services:
       - ./data:/app/logs
     networks:
       - ai_siem-network
+    depends_on:
+      - msgcenter
     restart: always
     deploy:
       resources:
         limits:
-          cpus: '0.2'      # Limit container to use max 20% of a CPU core
-          memory: 100M     # Limit container to use max 100 megabytes of memory
+          cpus: '0.2'
+          memory: 200M
           
   rpa:
     image: ai_siem/rpa_image:1.0.0
@@ -47,15 +47,15 @@ services:
       dockerfile: dockerfile
       tags:
         - ai_siem/rpa_image:1.0.0
-    # ports:
-    #   - "10002:10002"
     networks:
       - ai_siem-network
+    depends_on:
+      - msgcenter
     restart: always
     deploy:
       resources:
         limits:
-          cpus: '0.25'
+          cpus: '0.1'
           memory: 100M 
 
 networks:
