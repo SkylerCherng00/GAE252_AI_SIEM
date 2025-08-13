@@ -337,7 +337,13 @@ def _write_to_mongodb(collection_name: str, data: Union[Dict[str, Any], List[Dic
         print(f"{get_timestamp()} - ERROR - agent.py _write_to_mongodb() - Error writing to MongoDB: {str(e)}")
         return False
 
-def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria", top_k: Optional[int] = 5, language_code: Optional[str] = 'zh') -> str:
+def _analyze_logs(
+        logs: str,
+        collection_name: Optional[str] = "SecurityCriteria",
+        top_k: Optional[int] = 5,
+        language_code: Optional[str] = 'zh',
+        log_src :str = 'From_Pure_Logs'
+        ) -> str:
     '''
     Analyze logs using the LLM executor and return the results.
     Args:
@@ -345,6 +351,8 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         collection_name (str): The name of the Qdrant collection to search in for similar logs.
         top_k (int): The number of similar documents to retrieve from Qdrant.
         language_code (str): The language in which the report should be generated (default is 'zh' for Traditional Chinese and 'en' for English).
+        log_src (str): The source of the logs, used for reporting purposes.
+                       Default is 'From_Pure_Logs'.
     Returns:
         str: The analysis results from the LLM.
     '''
@@ -357,9 +365,15 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         ])
         preview_chain = preview_prompt | APP_STATE.llm
         preview_result = preview_chain.invoke({"input": logs})
+        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Log preview completed.")
+        
+        # print("-----")
+        # print(preview_result.content)
+        # print("-----")
 
         # Integrate with Qdrant for similarity search if a collection is specified
         # Create a chat prompt template for the agent
+        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Starting log analysis...")
         agent_prompt = ChatPromptTemplate.from_messages([
             SystemMessage(APP_STATE.sysmsg_loganalyzer),
             ("human", '''Analyze the following logs based on the provided context.\n
@@ -386,17 +400,6 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Complete Log analysis")
         # print(f"Log analysis result: {result}\n")
 
-        # Write the analysis result to MongoDB
-        result_json = json.loads(result)
-        timestamp_float = datetime.datetime.now().timestamp()
-        result_json['timestamp'] = timestamp_float
-        report_id = APP_STATE.report_id_factory.generate_report_id()
-        result_json['report_id'] = report_id
-        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Log analysis result timestamp {timestamp_float}")
-        # print(f"Log analysis result: {result_json}\n")
-        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Starting to write log analysis result to MongoDB...")
-        _write_to_mongodb(collection_name='LogAnalysisResults', data=result_json)
-        
         # The result will be a dict with an "answer" key containing the processed response
         # print(f"Log preview result: {preview_result.content}\n")
         # print(f"Agent reply type: {type(agent_reply)} keys:{agent_reply.keys()}\n")
@@ -405,12 +408,13 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
         # print(f"Agent reply answer type: {type(agent_reply.get('answer', 'No answer found'))}\n") # str
         # print(f"Agent reply answer: {agent_reply.get('answer', 'No answer found')}\n")
 
-        # Launch the Quick Response Team (QRT) execution in a separate thread
-        print(f"{get_timestamp()} - INFO - agent.py _analyze_logs() - Launching QRT execution...")
-        global lock
-        lock = threading.Lock() 
-        qrt = threading.Thread(target=_launch_qrt, args=(result, language_code, timestamp_float, report_id))
-        qrt.start()  # Start the QRT thread to handle quick response team execution
+        # Write the analysis result to MongoDB
+        result_json = json.loads(result)
+        # print(f"json parsing result: {result_json}")
+
+        for dict_ele in result_json:
+            if dict_ele:
+                _thread_safe_process(input=dict_ele, language_code=language_code, log_src=log_src)
         
         # Return just the answer string, not the whole dict
         return result
@@ -425,17 +429,59 @@ def _analyze_logs(logs: str, collection_name: Optional[str] = "SecurityCriteria"
             detail=f"Failed to analyze logs: {str(e)}"
         )
 
-def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp : float = .0, report_id: Optional[str] = '') -> None:
+def _thread_safe_process(input:dict=None, language_code:str='' , log_src:str = '') -> bool:
+    '''
+    Thread-safe function to process input data and launch QRT execution.
+    Args:
+        input (dict): The input data to process, expected to contain log analysis results.
+        language_code (str): The language in which the report should be generated.
+        log_src (str): The source of the logs, used for reporting purposes.
+    Returns:
+        True if processing was successful, False otherwise.
+    '''
+    try:
+        if input:
+            import threading
+            with threading.Lock():
+                timestamp_float = datetime.datetime.now().timestamp()
+                input['timestamp'] = timestamp_float
+                report_id = APP_STATE.report_id_factory.generate_report_id()
+                input['report_id'] = report_id
+                input['log_src'] = log_src
+
+                # Start the QRT thread to handle quick response team execution
+                print(f"{get_timestamp()} - INFO - agent.py _thread_safe_process() - Starting to launch QRT...")
+                qrt = threading.Thread(target=_launch_qrt, args=(str(input), language_code, timestamp_float, report_id, log_src))
+                qrt.start()  # Start the QRT thread to handle quick response team execution
+
+                print(f"{get_timestamp()} - INFO - agent.py _thread_safe_process() - Starting to write log analysis result to MongoDB...")
+                mongo = threading.Thread(target=_write_to_mongodb, args=('LogAnalysisResults', input))
+                mongo.start()
+
+        return True
+    except Exception as e:
+        print(f"{get_timestamp()} - ERROR - agent.py _thread_safe_process() - Error processing input: {str(e)}")
+        return False
+
+def _launch_qrt(
+        condition : str,
+        language_code: Optional[str] = 'zh',
+        timestamp : float = .0,
+        report_id: Optional[str] = '',
+        log_src: str = ''
+        ) -> None:
     '''
     Launch the Quick Response Team (QRT) execution based on the provided condition.
     Args:
         condition (str): The condition to analyze and execute the QRT response.
         language_code (str): The language in which the report should be generated (default is 'zh' for Traditional Chinese and 'en' for English).
+        timestamp (float): The timestamp of the analysis, used for logging and reporting.
+        report_id (str): The unique identifier for the report, used for tracking and reference.
+        log_src (str): The source of the logs, used for reporting purposes.
     Returns:
         None
     '''
     try:
-        lock.acquire()  # Ensure thread safety when accessing shared resources
         print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Starting QRT execution...")
         
         # Integrate with Qdrant for similarity search if a collection is specified
@@ -482,6 +528,7 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
         # Write the QRT response to MongoDB
         result_json = json.loads(result)
         result_json['short_report'] += f"\n*Report ID:* {report_id}\n" if language_code == 'en' else f"\n*報告 ID:* {report_id}\n"
+        result_json['short_report'] += f"\n*Log Source:* {log_src}\n" if language_code == 'en' else f"\n*日誌來源:* {log_src}\n"
 
         # Send the QRT response to the RPA endpoint
         print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Sending QRT response to RPA endpoint...")
@@ -506,8 +553,6 @@ def _launch_qrt(condition : str, language_code: Optional[str] = 'zh', timestamp 
             status_code=500,
             detail=f"Failed to launch QRT: {str(e)}"
         )
-    finally:
-        lock.release()
 
 @app.get("/agent/health")
 async def health_check():
@@ -707,7 +752,7 @@ async def analyze_logs_upload(file: UploadFile = File(...), language_code: Optio
         return {
             "success": True,
             "message": "Log analysis started",
-            "data": _analyze_logs(logs, language_code=language_code)
+            "data": _analyze_logs(logs, language_code=language_code, log_src=file.filename)
         }
     except Exception as e:
         # Catch and handle exceptions, making sure to include the original error message
@@ -715,4 +760,4 @@ async def analyze_logs_upload(file: UploadFile = File(...), language_code: Optio
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
 
 if __name__ == "__main__":
-    uvicorn.run("agent:app", host="0.0.0.0", port=8000)
+    uvicorn.run("agent:app", host="0.0.0.0", port=10001)

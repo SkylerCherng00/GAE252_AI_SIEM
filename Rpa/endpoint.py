@@ -1,1 +1,1 @@
-endpoint_url = "http://localhost:10000/config/config_rpa"
+endpoint_url = "http://localhost:10000/config/"

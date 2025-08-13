@@ -12,7 +12,7 @@ from endpoint import endpoint_url
 def get_slack_token_from_api() -> str:
     """從 API 取得 SLACK_BOT_TOKEN"""
     try:
-        response = requests.get(endpoint_url)
+        response = requests.get(endpoint_url+'config_rpa')
         response.raise_for_status()
         config_data = response.json()
         return config_data["configs"]["Slack"]["slack_bot_token"]
