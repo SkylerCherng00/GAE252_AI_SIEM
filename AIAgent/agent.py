@@ -451,7 +451,7 @@ def _thread_safe_process(input:dict=None, language_code:str='' , log_src:str = '
 
                 # Start the QRT thread to handle quick response team execution
                 print(f"{get_timestamp()} - INFO - agent.py _thread_safe_process() - Starting to launch QRT...")
-                qrt = threading.Thread(target=_launch_qrt, args=(str(input), language_code, timestamp_float, report_id, log_src))
+                qrt = threading.Thread(target=_launch_qrt, args=(str(input), language_code, timestamp_float, report_id, log_src, input))
                 qrt.start()  # Start the QRT thread to handle quick response team execution
 
                 print(f"{get_timestamp()} - INFO - agent.py _thread_safe_process() - Starting to write log analysis result to MongoDB...")
@@ -468,7 +468,8 @@ def _launch_qrt(
         language_code: Optional[str] = 'zh',
         timestamp : float = .0,
         report_id: Optional[str] = '',
-        log_src: str = ''
+        log_src: str = '',
+        full_report: str = ''
         ) -> None:
     '''
     Launch the Quick Response Team (QRT) execution based on the provided condition.
@@ -529,6 +530,7 @@ def _launch_qrt(
         result_json = json.loads(result)
         result_json['short_report'] += f"\n*Report ID:* {report_id}\n" if language_code == 'en' else f"\n*報告 ID:* {report_id}\n"
         result_json['short_report'] += f"\n*Log Source:* {log_src}\n" if language_code == 'en' else f"\n*日誌來源:* {log_src}\n"
+        result_json['full_report'] = full_report
 
         # Send the QRT response to the RPA endpoint
         print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Sending QRT response to RPA endpoint...")
