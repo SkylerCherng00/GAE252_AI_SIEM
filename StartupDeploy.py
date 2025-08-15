@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import subprocess
+import shutil
 
 def get_script_directory():
     """Get the directory where the script is located."""
@@ -167,26 +168,115 @@ def check_cloud_cli(cloud_provider):
         print(f"The {cloud_provider} CLI is not installed or not in the PATH.")
         return False
 
+def deploy_to_gcp():
+    """Deploy to Google Cloud Platform."""
+    print("Preparing to deploy to Google Cloud Platform...")
+    print("Ready the images")
+    update_local_endpoints()
+    subprocess.run(["docker", "compose", "build"])
+
+    repo_name = input("Enter the repository name for Artifact Registry (default: my-repo): ")
+    if not repo_name:
+        repo_name = "my-repo"
+    location = input("Enter the deployment location (default: us-central1): ")
+    if not location:
+        location = "us-central1"
+
+    try:
+        project_id = subprocess.check_output(["gcloud", "config", "get-value", "project"]).decode("utf-8").strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("Could not get GCP project ID. Make sure you are logged in and have a project set.")
+        return False
+
+    print(f"Using project ID: {project_id}")
+
+    # Create Artifact Registry repository
+    print(f"Creating Artifact Registry repository '{repo_name}' in '{location}'...")
+    subprocess.run(
+        [
+            "gcloud",
+            "artifacts",
+            "repositories",
+            "create",
+            repo_name,
+            f"--repository-format=docker",
+            f"--location={location}",
+            "--description=Docker repo for ai_siem images",
+        ],
+        check=True,
+    )
+
+    services = {
+        "agent": "ai_siem/agent_image:1.0.0",
+        "msgcenter": "ai_siem/msgcenter_image:1.0.0",
+        "rpa": "ai_siem/rpa_image:1.0.0",
+    }
+
+    gcr_image_names = {}
+    for service_name, image_name in services.items():
+        print(f"Processing service: {service_name}")
+
+        # Tag image
+        gcr_image_name = f"{location}-docker.pkg.dev/{project_id}/{repo_name}/{image_name.split('/')[1]}"
+        gcr_image_names[service_name] = gcr_image_name
+        print(f"Tagging image {image_name} as {gcr_image_name}")
+        subprocess.run(["docker", "tag", image_name, gcr_image_name], check=True)
+
+        # Push image
+        print(f"Pushing image {gcr_image_name}")
+        subprocess.run(["docker", "push", gcr_image_name], check=True)
+
+    print("\nUpdating service.yaml...")
+    service_yaml_example_path = os.path.join(get_script_directory(), "Deployment", "gcp", "service.yaml.example")
+    service_yaml_path = os.path.join(get_script_directory(), "Deployment", "gcp", "service.yaml")
+    shutil.copyfile(service_yaml_example_path, service_yaml_path)
+    with open(service_yaml_path, 'r') as f:
+        service_yaml = f.read()
+
+    for service_name, gcr_image_name in gcr_image_names.items():
+        service_yaml = re.sub(
+            f"image:.*{service_name.upper()}",
+            f"image: {gcr_image_name}",
+            service_yaml
+        )
+
+    with open(service_yaml_path, 'w') as f:
+        f.write(service_yaml)
+
+    print("Deploying to GCP Cloud Run...")
+    subprocess.run(
+        [
+            "gcloud",
+            "run",
+            "services",
+            "replace",
+            service_yaml_path,
+            f"--region={location}",
+        ],
+        check=True
+    )
+
+    print("\nDeployment to GCP Cloud Run completed successfully.")
+    print("\nPlease check the service status on the GCP Cloud Run console.")
+    return True
+
+def deploy_to_azure():
+    ...
+
 def deploy_to_cloud(cloud_provider:str):
     """Deploy to the selected cloud provider."""
     if not check_cloud_cli(cloud_provider):
         return False
-        
+
     if cloud_provider.lower() == 'azure':
-        print("Preparing to deploy to Azure...")
-        # Placeholder for Azure deployment logic
-        # You would typically use Azure CLI commands or Azure SDK here
-        print("Azure deployment not implemented yet.")
+        deploy_to_azure()
         return False
-        
+
     elif cloud_provider.lower() == 'gcp':
-        print("Preparing to deploy to Google Cloud Platform...")
-        # Placeholder for GCP deployment logic
-        # You would typically use Google Cloud SDK commands or APIs here
-        print("Google Cloud Platform deployment not implemented yet.")
-        return False
-        
+        return deploy_to_gcp()
+
     return False
+
 
 def main():
     """Main function for the deployment script."""
