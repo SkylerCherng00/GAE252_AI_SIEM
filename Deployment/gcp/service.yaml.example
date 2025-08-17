@@ -23,8 +23,11 @@ spec:
               containerPort: 10001
           resources:
             limits:
-              memory: "128Mi"
+              memory: "512Mi"
               cpu: "1"
+          volumeMounts:
+          - name: YOUR_VOLUME_NAME
+            mountPath: /app/logs
               
         - name: msgcenter
           image: YOUR_IMAGE_NAME_ON_ARTIFACT_REGISTRY_MSGCENTER
@@ -39,6 +42,14 @@ spec:
             limits:
               memory: "128Mi"
               cpu: "1"
+
+      volumes:
+      - name: YOUR_VOLUME_NAME
+        csi:
+          driver: gcsfuse.run.googleapis.com
+          volumeAttributes:
+            bucketName: YOUR_BUCKET_NAME
+            mountOptions: only-dir=data
   traffic:
   - percent: 100
     latestRevision: true

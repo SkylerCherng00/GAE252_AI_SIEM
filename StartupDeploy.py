@@ -3,6 +3,7 @@ import sys
 import re
 import subprocess
 import shutil
+import json
 
 def get_script_directory():
     """Get the directory where the script is located."""
@@ -178,9 +179,9 @@ def deploy_to_gcp():
     repo_name = input("Enter the repository name for Artifact Registry (default: my-repo): ")
     if not repo_name:
         repo_name = "my-repo"
-    location = input("Enter the deployment location (default: us-central1): ")
+    location = input("Enter the deployment location (default: asia-east1): ")
     if not location:
-        location = "us-central1"
+        location = "asia-east1"
 
     try:
         project_id = subprocess.check_output(["gcloud", "config", "get-value", "project"]).decode("utf-8").strip()
@@ -190,21 +191,30 @@ def deploy_to_gcp():
 
     print(f"Using project ID: {project_id}")
 
-    # Create Artifact Registry repository
-    print(f"Creating Artifact Registry repository '{repo_name}' in '{location}'...")
-    subprocess.run(
-        [
-            "gcloud",
-            "artifacts",
-            "repositories",
-            "create",
-            repo_name,
-            f"--repository-format=docker",
-            f"--location={location}",
-            "--description=Docker repo for ai_siem images",
-        ],
-        check=True,
-    )
+    # Check if Artifact Registry repository exists
+    repo_check_command = [
+        "gcloud", "artifacts", "repositories", "describe", repo_name,
+        f"--location={location}",
+    ]
+    repo_check_result = subprocess.run(repo_check_command, capture_output=True, text=True)
+
+    if repo_check_result.returncode == 0:
+        print(f"Artifact Registry repository '{repo_name}' already exists in '{location}'.")
+    else:
+        print(f"Creating Artifact Registry repository '{repo_name}' in '{location}'...")
+        subprocess.run(
+            [
+                "gcloud",
+                "artifacts",
+                "repositories",
+                "create",
+                repo_name,
+                f"--repository-format=docker",
+                f"--location={location}",
+                "--description=Docker repo for ai_siem images",
+            ],
+            check=True,
+        )
 
     services = {
         "agent": "ai_siem/agent_image:1.0.0",
@@ -226,6 +236,53 @@ def deploy_to_gcp():
         print(f"Pushing image {gcr_image_name}")
         subprocess.run(["docker", "push", gcr_image_name], check=True)
 
+    # Get bucket name and create if not exists
+    bucket_name = input("Enter the Cloud Storage bucket name for logs (default: ai-siem-logs): ")
+    if not bucket_name:
+        bucket_name = "ai-siem-logs"
+
+    bucket_check_command = ["gcloud", "storage", "buckets", "describe", f"gs://{bucket_name}"]
+    bucket_check_result = subprocess.run(bucket_check_command, capture_output=True, text=True)
+
+    if bucket_check_result.returncode == 0:
+        print(f"Cloud Storage bucket '{bucket_name}' already exists.")
+    else:
+        print(f"Creating Cloud Storage bucket '{bucket_name}'...")
+        subprocess.run(["gcloud", "storage", "buckets", "create", f"gs://{bucket_name}", f"--project={project_id}", f"--location={location}"], check=True)
+        print(f"Creating 'data' folder in bucket '{bucket_name}'...")
+        with open("empty.txt", "w") as f:
+            f.write("")
+        subprocess.run(["gcloud", "storage", "cp", "empty.txt", f"gs://{bucket_name}/data/"], check=True)
+        os.remove("empty.txt")
+
+    # Check if Cloud Run service exists to get the volume name
+    service_check_command = [
+        "gcloud", "run", "services", "describe", "ai-siem-service",
+        f"--platform=managed", f"--region={location}",
+    ]
+    service_check_result = subprocess.run(service_check_command, capture_output=True, text=True)
+
+    volume_name = ""
+    if service_check_result.returncode == 0:
+        print("Cloud Run service 'ai-siem-service' already exists. Querying for volume name.")
+        try:
+            # Use a different command to get json output
+            service_desc_command = [
+                "gcloud", "run", "services", "describe", "ai-siem-service",
+                f"--platform=managed", f"--region={location}", "--format=json"
+            ]
+            service_desc_result = subprocess.check_output(service_desc_command)
+            service_desc = json.loads(service_desc_result)
+            volume_name = service_desc['spec']['template']['spec']['volumes'][0]['name']
+            print(f"Found existing volume name: {volume_name}")
+        except (subprocess.CalledProcessError, KeyError, IndexError, json.JSONDecodeError) as e:
+            print(f"Could not determine existing volume name: {e}. Will generate a new name from the bucket name.")
+            pass # Fallback to generating a new name
+    
+    if not volume_name:
+        print("Generating volume name from bucket name.")
+        volume_name = f"{bucket_name}-volume"
+
     print("\nUpdating service.yaml...")
     service_yaml_example_path = os.path.join(get_script_directory(), "Deployment", "gcp", "service.yaml.example")
     service_yaml_path = os.path.join(get_script_directory(), "Deployment", "gcp", "service.yaml")
@@ -239,9 +296,24 @@ def deploy_to_gcp():
             f"image: {gcr_image_name}",
             service_yaml
         )
+    
+    service_yaml = service_yaml.replace("YOUR_BUCKET_NAME", bucket_name)
+    service_yaml = service_yaml.replace("YOUR_VOLUME_NAME", volume_name)
 
     with open(service_yaml_path, 'w') as f:
         f.write(service_yaml)
+
+    # Check if Cloud Run service exists
+    service_check_command = [
+        "gcloud", "run", "services", "describe", "ai-siem-service",
+        f"--platform=managed", f"--region={location}",
+    ]
+    service_check_result = subprocess.run(service_check_command, capture_output=True, text=True)
+
+    if service_check_result.returncode == 0:
+        print("Cloud Run service 'ai-siem-service' already exists. It will be updated.")
+    else:
+        print("Cloud Run service 'ai-siem-service' does not exist. A new service will be created.")
 
     print("Deploying to GCP Cloud Run...")
     subprocess.run(
@@ -260,7 +332,10 @@ def deploy_to_gcp():
     print("\nPlease check the service status on the GCP Cloud Run console.")
     return True
 
+
+
 def deploy_to_azure():
+    print("Not Yet")
     ...
 
 def deploy_to_cloud(cloud_provider:str):

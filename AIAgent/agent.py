@@ -530,7 +530,7 @@ def _launch_qrt(
         result_json = json.loads(result)
         result_json['short_report'] += f"\n*Report ID:* {report_id}\n" if language_code == 'en' else f"\n*報告 ID:* {report_id}\n"
         result_json['short_report'] += f"\n*Log Source:* {log_src}\n" if language_code == 'en' else f"\n*日誌來源:* {log_src}\n"
-        result_json['full_report'] = full_report
+        # result_json['full_report'] = full_report
 
         # Send the QRT response to the RPA endpoint
         print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Sending QRT response to RPA endpoint...")
@@ -741,25 +741,27 @@ async def analyze_logs_upload(file: UploadFile = File(...), language_code: Optio
         file_path = docs_dir / file.filename
         print(f"{get_timestamp()} - INFO - agent.py analyze_logs_upload() - Saving file to: {file_path}")
         
+        # Read directly from UploadFile (before saving)
+        content = await file.read()
+        content = content.decode('utf-8')
+
         # The crucial step: write the contents of the UploadFile to the new file
         # Using a sync operation with a thread pool to avoid blocking the event loop
         import shutil
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-
-        # Open the file and read its contents
-        with open(file_path, "r", encoding="utf-8") as f:
-            logs = f.read()
-
+        
         return {
             "success": True,
             "message": "Log analysis started",
-            "data": _analyze_logs(logs, language_code=language_code, log_src=file.filename)
+            "data": _analyze_logs(content, language_code=language_code, log_src=file.filename)
         }
     except Exception as e:
         # Catch and handle exceptions, making sure to include the original error message
         # for better debugging.
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
+    finally:
+        del content
 
 if __name__ == "__main__":
     uvicorn.run("agent:app", host="0.0.0.0", port=10001)
