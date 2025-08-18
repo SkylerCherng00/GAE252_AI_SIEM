@@ -13,30 +13,43 @@ spec:
         run.googleapis.com/startup-cpu-boost: 'true'
 
     spec:
+      containerConcurrency: 20
+      timeoutSeconds: 300
       containers:
         - name: agent
-          image: us-central1-docker.pkg.dev/testenv00/my-repo/agent_image:1.0.0
+          image: asia-east1-docker.pkg.dev/testenv00/my-repo/agent_image:1.0.0
           ports:
             - name: http1
               containerPort: 10001
           resources:
             limits:
-              memory: "128Mi"
+              memory: "512Mi"
               cpu: "1"
+          volumeMounts:
+          - name: ai-siem-logs-volume
+            mountPath: /app/logs
               
         - name: msgcenter
-          image: us-central1-docker.pkg.dev/testenv00/my-repo/msgcenter_image:1.0.0
+          image: asia-east1-docker.pkg.dev/testenv00/my-repo/msgcenter_image:1.0.0
           resources:
             limits:
               memory: "128Mi"
               cpu: "1"
 
         - name: rpa
-          image: us-central1-docker.pkg.dev/testenv00/my-repo/rpa_image:1.0.0
+          image: asia-east1-docker.pkg.dev/testenv00/my-repo/rpa_image:1.0.0
           resources:
             limits:
               memory: "128Mi"
               cpu: "1"
+
+      volumes:
+      - name: ai-siem-logs-volume
+        csi:
+          driver: gcsfuse.run.googleapis.com
+          volumeAttributes:
+            bucketName: ai-siem-logs
+            mountOptions: only-dir=data
   traffic:
   - percent: 100
     latestRevision: true

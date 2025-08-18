@@ -4,7 +4,7 @@ services:
     container_name: ai_siem_msgcenter
     build:
       context: ./MsgCenter
-      dockerfile: dockerfile
+      dockerfile: Dockerfile
       tags:
         - ai_siem/msgcenter_image:1.0.0
     networks:
@@ -21,7 +21,7 @@ services:
     container_name: ai_siem_agent
     build:
       context: ./AIAgent
-      dockerfile: dockerfile
+      dockerfile: Dockerfile
       tags:
         - ai_siem/agent_image:1.0.0
     ports:
@@ -44,7 +44,7 @@ services:
     container_name: ai_siem_rpa
     build:
       context: ./Rpa
-      dockerfile: dockerfile
+      dockerfile: Dockerfile
       tags:
         - ai_siem/rpa_image:1.0.0
     networks:

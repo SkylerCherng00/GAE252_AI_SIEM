@@ -12,7 +12,6 @@ from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from pathlib import Path
 from contextlib import asynccontextmanager
-import threading
 import json
 import datetime
 import os
@@ -451,7 +450,7 @@ def _thread_safe_process(input:dict=None, language_code:str='' , log_src:str = '
 
                 # Start the QRT thread to handle quick response team execution
                 print(f"{get_timestamp()} - INFO - agent.py _thread_safe_process() - Starting to launch QRT...")
-                qrt = threading.Thread(target=_launch_qrt, args=(str(input), language_code, timestamp_float, report_id, log_src, input))
+                qrt = threading.Thread(target=_launch_qrt, args=(str(input), language_code, timestamp_float, report_id, log_src, input.get("analysis_report", '')))
                 qrt.start()  # Start the QRT thread to handle quick response team execution
 
                 print(f"{get_timestamp()} - INFO - agent.py _thread_safe_process() - Starting to write log analysis result to MongoDB...")
@@ -469,7 +468,7 @@ def _launch_qrt(
         timestamp : float = .0,
         report_id: Optional[str] = '',
         log_src: str = '',
-        full_report: str = ''
+        md_content: str = ''
         ) -> None:
     '''
     Launch the Quick Response Team (QRT) execution based on the provided condition.
@@ -479,6 +478,7 @@ def _launch_qrt(
         timestamp (float): The timestamp of the analysis, used for logging and reporting.
         report_id (str): The unique identifier for the report, used for tracking and reference.
         log_src (str): The source of the logs, used for reporting purposes.
+        md_content (str): The full report made by analysis function.
     Returns:
         None
     '''
@@ -500,19 +500,20 @@ def _launch_qrt(
         
         # Get the retriever for security criteria
         retriever_sop = _get_retriever_instance(collection_name='SOP', top_k=5)
-        retriever_comtable = _get_retriever_instance(collection_name='ComTable', top_k=5)
+        # retriever_comtable = _get_retriever_instance(collection_name='ComTable', top_k=5)
 
         # Create a custom retriever that combines results from both SOP and ComTable
-        from langchain_core.runnables import chain
-        @chain
-        def custom_retriever(inputs):
-            q = inputs["input"]
-            docsA = retriever_sop.invoke(q)
-            docsB = retriever_comtable.invoke(q)
-            return docsA + docsB
+        # from langchain_core.runnables import chain
+        # @chain
+        # def custom_retriever(inputs):
+        #     q = inputs["input"]
+        #     docsA = retriever_sop.invoke(q)
+        #     docsB = retriever_comtable.invoke(q)
+        #     return docsA + docsB
 
         # Create a proper retrieval chain that will combine documents with the query
-        rag_chain = create_retrieval_chain(custom_retriever, document_chain)
+        # rag_chain = create_retrieval_chain(custom_retriever, document_chain)
+        rag_chain = create_retrieval_chain(retriever_sop, document_chain)
         
         # The invoke method expects a dict with the 'input' key
         agent_reply = rag_chain.invoke({"input": condition, "lang": language_code})
@@ -530,7 +531,7 @@ def _launch_qrt(
         result_json = json.loads(result)
         result_json['short_report'] += f"\n*Report ID:* {report_id}\n" if language_code == 'en' else f"\n*報告 ID:* {report_id}\n"
         result_json['short_report'] += f"\n*Log Source:* {log_src}\n" if language_code == 'en' else f"\n*日誌來源:* {log_src}\n"
-        # result_json['full_report'] = full_report
+        result_json['md_content'] = md_content
 
         # Send the QRT response to the RPA endpoint
         print(f"{get_timestamp()} - INFO - agent.py _launch_qrt() - Sending QRT response to RPA endpoint...")

@@ -329,14 +329,126 @@ def deploy_to_gcp():
     )
 
     print("\nDeployment to GCP Cloud Run completed successfully.")
-    print("\nPlease check the service status on the GCP Cloud Run console.")
+    print("Please check the service status on the GCP Cloud Run console.")
     return True
 
-
-
 def deploy_to_azure():
-    print("Not Yet")
-    ...
+    """Deploy to Azure Container Apps."""
+    print("Preparing to deploy to Azure...")
+    print("Ready the images")
+    update_docker_endpoints()
+    subprocess.run(["docker", "compose", "build"], check=True)
+
+    resource_group = input("Enter the resource group name (default: my-ai-siem-rg): ") or "my-ai-siem-rg"
+    location = input("Enter the deployment location (default: eastus): ") or "eastus"
+    acr_name = input("Enter the Azure Container Registry name (default: myaisiemacr): ") or "myaisiemacr"
+    storage_account_name = input("Enter the Azure Storage Account name (default: myaisiemstorage): ") or "myaisiemstorage"
+    file_share_name = input("Enter the Azure File Share name (default: ai-siem-logs): ") or "ai-siem-logs"
+    container_app_env = f"{resource_group}-env"
+    container_app_name = "ai-siem-app"
+
+    # Check if resource group exists
+    if subprocess.run(["az", "group", "show", "--name", resource_group], capture_output=True).returncode != 0:
+        print(f"Creating resource group '{resource_group}' in '{location}'...")
+        subprocess.run(["az", "group", "create", "--name", resource_group, "--location", location], check=True)
+    else:
+        print(f"Resource group '{resource_group}' already exists.")
+
+    # Check if ACR exists
+    if subprocess.run(["az", "acr", "show", "--name", acr_name, "--resource-group", resource_group], capture_output=True).returncode != 0:
+        print(f"Creating Azure Container Registry '{acr_name}'...")
+        subprocess.run(["az", "acr", "create", "--resource-group", resource_group, "--name", acr_name, "--sku", "Basic", "--admin-enabled", "true"], check=True)
+    else:
+        print(f"Azure Container Registry '{acr_name}' already exists.")
+
+    # Login to ACR
+    print(f"Logging in to Azure Container Registry '{acr_name}'...")
+    subprocess.run(["az", "acr", "login", "--name", acr_name], check=True)
+
+    services = {
+        "agent": "ai_siem/agent_image:1.0.0",
+        "msgcenter": "ai_siem/msgcenter_image:1.0.0",
+        "rpa": "ai_siem/rpa_image:1.0.0",
+    }
+    
+    acr_login_server = subprocess.check_output(["az", "acr", "show", "--name", acr_name, "--query", "loginServer", "-o", "tsv"]).decode("utf-8").strip()
+    
+    acr_image_names = {}
+    for service_name, image_name in services.items():
+        print(f"Processing service: {service_name}")
+        acr_image_name = f"{acr_login_server}/{image_name.split('/')[1]}"
+        acr_image_names[service_name] = acr_image_name
+        print(f"Tagging image {image_name} as {acr_image_name}")
+        subprocess.run(["docker", "tag", image_name, acr_image_name], check=True)
+        print(f"Pushing image {acr_image_name}")
+        subprocess.run(["docker", "push", acr_image_name], check=True)
+
+    # Check if storage account exists
+    if subprocess.run(["az", "storage", "account", "show", "--name", storage_account_name, "--resource-group", resource_group], capture_output=True).returncode != 0:
+        print(f"Creating Azure Storage Account '{storage_account_name}'...")
+        subprocess.run(["az", "storage", "account", "create", "--name", storage_account_name, "--resource-group", resource_group, "--location", location, "--sku", "Standard_LRS"], check=True)
+    else:
+        print(f"Azure Storage Account '{storage_account_name}' already exists.")
+
+    storage_account_key = subprocess.check_output(["az", "storage", "account", "keys", "list", "--resource-group", resource_group, "--account-name", storage_account_name, "--query", "[0].value", "-o", "tsv"]).decode("utf-8").strip()
+
+    # Check if file share exists
+    if '"exists": false' in subprocess.check_output(["az", "storage", "share", "exists", "--name", file_share_name, "--account-name", storage_account_name, "--account-key", storage_account_key]).decode("utf-8"):
+        print(f"Creating Azure File Share '{file_share_name}'...")
+        subprocess.run(["az", "storage", "share", "create", "--name", file_share_name, "--account-name", storage_account_name, "--account-key", storage_account_key], check=True)
+    else:
+        print(f"Azure File Share '{file_share_name}' already exists.")
+
+    # Create Container App Environment
+    if subprocess.run(["az", "containerapp", "env", "show", "--name", container_app_env, "--resource-group", resource_group], capture_output=True).returncode != 0:
+        print(f"Creating Container App Environment '{container_app_env}'...")
+        subprocess.run(["az", "containerapp", "env", "create", "--name", container_app_env, "--resource-group", resource_group, "--location", location], check=True)
+    else:
+        print(f"Container App Environment '{container_app_env}' already exists.")
+
+    # Create or Update Container App
+    print(f"Creating or updating container app '{container_app_name}'...")
+
+    # Create a yaml file for multi-container deployment
+    service_yaml_example_path = os.path.join(get_script_directory(), "Deployment", "azure", "service.yaml.example")
+    service_yaml_path = os.path.join(get_script_directory(), "Deployment", "azure", "service.yaml")
+    shutil.copyfile(service_yaml_example_path, service_yaml_path)
+    with open(service_yaml_path, 'r') as f:
+        service_yaml = f.read()
+
+    subscription_id = subprocess.check_output(["az", "account", "show", "--query", "id", "-o", "tsv"]).decode("utf-8").strip()
+
+    service_yaml = service_yaml.replace("YOUR_LOCATION", location)
+    service_yaml = service_yaml.replace("YOUR_CONTAINER_APP_NAME", container_app_name)
+    service_yaml = service_yaml.replace("YOUR_RESOURCE_GROUP", resource_group)
+    service_yaml = service_yaml.replace("YOUR_SUBSCRIPTION_ID", subscription_id)
+    service_yaml = service_yaml.replace("YOUR_CONTAINER_APP_ENV", container_app_env)
+    service_yaml = service_yaml.replace("YOUR_ACR_LOGIN_SERVER", acr_login_server)
+    service_yaml = service_yaml.replace("YOUR_ACR_NAME", acr_name)
+    service_yaml = service_yaml.replace("YOUR_STORAGE_ACCOUNT_NAME", storage_account_name)
+
+    print("\nGenerated service.yaml content:")
+    print(service_yaml)
+
+    with open(service_yaml_path, 'w') as f:
+        f.write(service_yaml)
+
+    command = [
+        "az", "containerapp", "create",
+        "--name", container_app_name,
+        "--resource-group", resource_group,
+        "--environment", container_app_env,
+        "--yaml", service_yaml_path
+    ]
+    
+    print("\nExecuting deployment command:")
+    print(" ".join(command))
+
+    subprocess.run(command, check=True)
+
+    print("\nDeployment to Azure completed successfully.")
+    print("Please check the service status on the Azure Portal.")
+    return True
 
 def deploy_to_cloud(cloud_provider:str):
     """Deploy to the selected cloud provider."""
@@ -344,8 +456,7 @@ def deploy_to_cloud(cloud_provider:str):
         return False
 
     if cloud_provider.lower() == 'azure':
-        deploy_to_azure()
-        return False
+        return deploy_to_azure()
 
     elif cloud_provider.lower() == 'gcp':
         return deploy_to_gcp()

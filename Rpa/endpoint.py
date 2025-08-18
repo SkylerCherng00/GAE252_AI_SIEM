@@ -1,1 +1,1 @@
-endpoint_url = "http://localhost:10000/config/"
+endpoint_url = "http://msgcenter:10000/config/"
