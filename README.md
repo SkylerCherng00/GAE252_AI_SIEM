@@ -104,8 +104,7 @@ The `StartupDeploy.py` script provides a convenient way to deploy the applicatio
 
 Once the services are running, you can start analyzing logs.
 
-1.  **Access the web interface:** Open the `AIAgent/agent_test.html` file in your browser to send logs to the AIAgent for analysis.
-2.  **Use the API:** The AIAgent exposes an API for programmatic access. You can explore the API endpoints using the Swagger UI at `http://localhost:8000/agent/docs`.
+**Use the API:** The AIAgent exposes an API for programmatic access. You can explore the API endpoints using the Swagger UI at `http://localhost:8000/docs`.
 
 ## 🤝 Contributing
 
