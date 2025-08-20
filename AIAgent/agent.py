@@ -773,5 +773,69 @@ async def analyze_logs_upload(file: UploadFile = File(...), language_code: Optio
     finally:
         del content
 
+@app.get("/agent/docs", response_model=APIResponse)
+async def get_api_docs():
+    """
+    Get API documentation and usage instructions.
+    
+    This endpoint provides detailed documentation on how to use the API,
+    including explanations of the different endpoints and how to interact with them.
+    
+    Returns:
+        APIResponse: A standardized response containing the API documentation.
+    """
+    docs_content = {
+        "title": "AI SIEM Log Analysis API Documentation",
+        "version": "1.0.3",
+        "description": "This document provides instructions on how to use the AI SIEM Log Analysis API.",
+        "endpoints": [
+            {
+                "path": "/agent/health",
+                "method": "GET",
+                "description": "Check the health status of the API, including available and current models."
+            },
+            {
+                "path": "/agent/models",
+                "method": "GET",
+                "description": "List all available LLM models that can be used for analysis."
+            },
+            {
+                "path": "/agent/switch-model",
+                "method": "POST",
+                "description": "Switch the active LLM model for log analysis.",
+                "body": {
+                    "model_type": "string (e.g., 'ollama', 'gemini', 'azure')"
+                }
+            },
+            {
+                "path": "/agent/analyze-logs",
+                "method": "POST",
+                "description": "Analyze logs provided in the request body.",
+                "body": {
+                    "logs": "string",
+                    "collection_name": "string (optional)",
+                    "top_k": "integer (optional)"
+                },
+                "query_params": {
+                    "language_code": "string (optional, 'zh' or 'en', default: 'zh')"
+                }
+            },
+            {
+                "path": "/agent/analyze-logs/upload",
+                "method": "POST",
+                "description": "Upload a log file for analysis.",
+                "body": "file (multipart/form-data)",
+                "query_params": {
+                    "language_code": "string (optional, 'zh' or 'en', default: 'zh')"
+                }
+            }
+        ]
+    }
+    return APIResponse(
+        success=True,
+        message="API documentation retrieved successfully",
+        data=docs_content
+    )
+
 if __name__ == "__main__":
     uvicorn.run("agent:app", host="0.0.0.0", port=10001)

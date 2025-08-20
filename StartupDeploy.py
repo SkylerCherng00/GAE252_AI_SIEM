@@ -477,9 +477,9 @@ def main():
                 if cloud_choice == '1':
                     deploy_to_cloud('gcp')
                     break
-                elif cloud_choice == '2':
-                    deploy_to_cloud('azure')
-                    break
+                # elif cloud_choice == '2':
+                #     deploy_to_cloud('azure')
+                #     break
                 elif cloud_choice == 'b':
                     break
                 else:
