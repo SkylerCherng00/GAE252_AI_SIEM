@@ -1,7 +1,6 @@
 import re
 from datetime import datetime
 from typing import Dict, Any, Optional
-from .endpoint import get_timestamp
 from .util_mongodb import MongoDBHandler
 
 class ReportIDFactory:
@@ -32,9 +31,9 @@ class ReportIDFactory:
         try:
             self.mongo_handler = mongo_handler if mongo_handler else MongoDBHandler()
             self._initialized = True
-            print(f"{get_timestamp()} - INFO - factory_reportid.py ReportIDFactory.__init__() - ReportIDFactory initialized successfully")
+            print(f"- INFO - factory_reportid.py ReportIDFactory.__init__() - ReportIDFactory initialized successfully")
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_reportid.py ReportIDFactory.__init__() - Failed to initialize ReportIDFactory: {e}")
+            print(f"- ERROR - factory_reportid.py ReportIDFactory.__init__() - Failed to initialize ReportIDFactory: {e}")
             raise
     
     def _get_latest_report_id(self) -> Optional[str]:
@@ -57,14 +56,14 @@ class ReportIDFactory:
             
             if results and len(results) > 0 and "report_id" in results[0]:
                 latest_id = results[0]["report_id"]
-                print(f"{get_timestamp()} - INFO - factory_reportid.py ReportIDFactory._get_latest_report_id() - Latest report ID found: {latest_id}")
+                print(f"- INFO - factory_reportid.py ReportIDFactory._get_latest_report_id() - Latest report ID found: {latest_id}")
                 return latest_id
             else:
-                print(f"{get_timestamp()} - INFO - factory_reportid.py ReportIDFactory._get_latest_report_id() - No existing report IDs found")
+                print(f"- INFO - factory_reportid.py ReportIDFactory._get_latest_report_id() - No existing report IDs found")
                 return None
                 
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_reportid.py ReportIDFactory._get_latest_report_id() - Failed to get latest report ID: {e}")
+            print(f"- ERROR - factory_reportid.py ReportIDFactory._get_latest_report_id() - Failed to get latest report ID: {e}")
             return None
     
     def _extract_sequence_number(self, report_id: str) -> int:
@@ -112,11 +111,11 @@ class ReportIDFactory:
             # Format: REP-YYYYMMDD-XXXX (XXXX is zero-padded sequence number)
             new_report_id = f"REP-{today}-{sequence_number:04d}"
             
-            print(f"{get_timestamp()} - INFO - factory_reportid.py ReportIDFactory.generate_report_id() - Generated new report ID: {new_report_id}")
+            print(f"- INFO - factory_reportid.py ReportIDFactory.generate_report_id() - Generated new report ID: {new_report_id}")
             return new_report_id
             
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_reportid.py ReportIDFactory.generate_report_id() - Failed to generate report ID: {e}")
+            print(f"- ERROR - factory_reportid.py ReportIDFactory.generate_report_id() - Failed to generate report ID: {e}")
             # Fallback report ID in case of error
             fallback_id = f"REP-{datetime.now().strftime('%Y%m%d')}-ERROR"
             return fallback_id
@@ -147,13 +146,13 @@ class ReportIDFactory:
             )
             
             if success:
-                print(f"{get_timestamp()} - INFO - factory_reportid.py ReportIDFactory.register_report_id() - Report ID registered successfully: {report_data['report_id']}")
+                print(f"- INFO - factory_reportid.py ReportIDFactory.register_report_id() - Report ID registered successfully: {report_data['report_id']}")
             else:
-                print(f"{get_timestamp()} - ERROR - factory_reportid.py ReportIDFactory.register_report_id() - Failed to register report ID: {report_data['report_id']}")
+                print(f"- ERROR - factory_reportid.py ReportIDFactory.register_report_id() - Failed to register report ID: {report_data['report_id']}")
             
             return success
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_reportid.py ReportIDFactory.register_report_id() - Error registering report ID: {e}")
+            print(f"- ERROR - factory_reportid.py ReportIDFactory.register_report_id() - Error registering report ID: {e}")
             return False
 
 
@@ -166,7 +165,7 @@ def main():
     
     # Generate a new report ID
     new_report_id = report_factory.generate_report_id()
-    print(f"{get_timestamp()} - INFO - factory_reportid.py main() - Generated report ID: {new_report_id}")
+    print(f"- INFO - factory_reportid.py main() - Generated report ID: {new_report_id}")
     
     # Example: Register a new report with this ID
     sample_report = {
@@ -183,7 +182,7 @@ def main():
     
     # Generate another report ID (should be incremented)
     another_report_id = report_factory.generate_report_id()
-    print(f"{get_timestamp()} - INFO - factory_reportid.py main() - Another report ID: {another_report_id}")
+    print(f"- INFO - factory_reportid.py main() - Another report ID: {another_report_id}")
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 import json
 import datetime
 import os
+import math
 # Change the working directory to the project root
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -335,6 +336,113 @@ def _write_to_mongodb(collection_name: str, data: Union[Dict[str, Any], List[Dic
         print(f"- ERROR - agent.py _write_to_mongodb() - Error writing to MongoDB: {str(e)}")
         return False
 
+PREVIEW_RESULT = list()
+
+def _preview_logs_analyze(logs: str) -> str:
+    try:
+        global PREVIEW_RESULT
+        print(logs)
+        # If the log is small enough, preview it directly
+        preview_prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(APP_STATE.sysmsg_logpreviewer),
+            ("human", "Preview the following logs:\n\n{input}")
+        ])
+        preview_chain = preview_prompt | APP_STATE.llm
+        preview_result = preview_chain.invoke({"input": logs})
+        PREVIEW_RESULT.append(preview_result.content)
+    except Exception as e:
+        print(f"- ERROR - agent.py _preview_logs_analyze() - Error during log preview: {str(e)}")
+
+def _preview_logs(logs: str) -> str:
+    """
+    Preview and chunk logs to fit within a specified token limit, then summarize each chunk.
+
+    This function takes a string of logs, estimates the number of tokens,
+    and if it exceeds a certain limit, it chunks the logs into smaller
+    parts. Each chunk is prefixed with a header indicating its position
+    (e.g., "Chunk 1 of 3"). Each chunk is then sent to an LLM for previewing.
+    The previews are then combined.
+
+    Args:
+        logs (str): The raw log data.
+
+    Returns:
+        str: The summarized preview of the logs.
+    """
+    try:
+        # Constants for token estimation and limits
+        CHARS_PER_TOKEN = 4
+        MAX_TOKENS_LLM = 128000  # Adjust this based on your LLM's capabilities
+        # MAX_TOKENS_PER_MINUTE = 1000000  # Adjust this based on your LLM's capabilities
+        MAX_TOKENS_PER_CHUNK = MAX_TOKENS_LLM * 0.6
+
+        estimated_total_tokens = len(logs) / CHARS_PER_TOKEN
+        print(f"- INFO - agent.py _preview_logs() - Estimated total tokens: {estimated_total_tokens}")
+
+        if estimated_total_tokens <= MAX_TOKENS_PER_CHUNK:
+            # If the log is small enough, preview it directly
+            preview_prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(APP_STATE.sysmsg_logpreviewer),
+                ("human", "Preview the following logs:\n\n{input}")
+            ])
+            preview_chain = preview_prompt | APP_STATE.llm
+            preview_result = preview_chain.invoke({"input": logs})
+            print(f"- INFO - agent.py _preview_logs() - Log preview completed without chunking.")
+            return preview_result.content
+
+        # If the logs exceed the limit, chunk them by lines
+        print(f"- INFO - agent.py _preview_logs() - Log exceeds token limit, chunking logs...")
+        lines = logs.split('\n')
+        
+        chunks = []
+        current_chunk_lines = []
+        current_chunk_tokens = 0
+
+        print(f"- INFO - agent.py _preview_logs() - Splitting logs into chunks...")
+        for line in lines:
+            line_tokens = len(line) / CHARS_PER_TOKEN
+            if current_chunk_tokens + line_tokens > MAX_TOKENS_PER_CHUNK and current_chunk_lines:
+                chunks.append("\n".join(current_chunk_lines))
+                current_chunk_lines = [line]
+                current_chunk_tokens = line_tokens
+            else:
+                current_chunk_lines.append(line)
+                current_chunk_tokens += line_tokens
+        print(f"- INFO - agent.py _preview_logs() - Finished splitting logs into {len(chunks)} chunks.")
+
+        if current_chunk_lines:
+            chunks.append("\n".join(current_chunk_lines))
+
+        # Add headers to each chunk and preview each one
+        total_chunks = len(chunks)
+        summarized_chunks = []
+        for i, chunk in enumerate(chunks):
+            print(f"- INFO - agent.py _preview_logs() - Processing chunk {i+1} of {total_chunks}...")
+            chunk_header = f"--- Chunk {i+1} of {total_chunks} ---\n"
+            headed_chunk = chunk_header + chunk
+
+            # preview_prompt = ChatPromptTemplate.from_messages([
+            #     SystemMessage(APP_STATE.sysmsg_logpreviewer),
+            #     ("human", "Preview the following log chunk:\n\n{input}")
+            # ])
+            # preview_chain = preview_prompt | APP_STATE.llm
+            # preview_result = preview_chain.invoke({"input": headed_chunk})
+            # summarized_chunks.append(preview_result.content)
+            import threading
+            t = threading.Thread(target=_preview_logs_analyze, args=(headed_chunk))
+            t.start()  # Start the thread to preview the chunk asynchronously
+        # Join the summarized chunks into a single string
+        t.join()
+        print(f"- INFO - agent.py _preview_logs() - All chunks processed, summarizing results...")
+        return None
+        # return "\n\n".join(summarized_chunks)
+    except Exception as e:
+        print(f"- ERROR - agent.py _preview_logs() - Error during log preview: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to preview logs: {str(e)}"
+        )
+
 def _analyze_logs(
         logs: str,
         collection_name: Optional[str] = "SecurityCriteria",
@@ -342,7 +450,7 @@ def _analyze_logs(
         language_code: Optional[str] = 'zh',
         log_src :str = 'From_Pure_Logs'
         ) -> str:
-    '''
+    """
     Analyze logs using the LLM executor and return the results.
     Args:
         logs (str): The raw log data to analyze.
@@ -353,16 +461,13 @@ def _analyze_logs(
                        Default is 'From_Pure_Logs'.
     Returns:
         str: The analysis results from the LLM.
-    '''
+    """
     try:
         print(f"- INFO - agent.py _analyze_logs() - Analyzing logs with language code: {language_code}")
         # Preview the logs before analysis
-        preview_prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(APP_STATE.sysmsg_logpreviewer),
-            ("human", "Preview the following logs:\n\n{input}")
-        ])
-        preview_chain = preview_prompt | APP_STATE.llm
-        preview_result = preview_chain.invoke({"input": logs})
+        preview_result_content = _preview_logs(logs)
+        if not preview_result_content:
+            preview_result_content = "\n\n".join(PREVIEW_RESULT)
         print(f"- INFO - agent.py _analyze_logs() - Log preview completed.")
 
         # Integrate with Qdrant for similarity search if a collection is specified
@@ -389,7 +494,7 @@ def _analyze_logs(
         rag_chain = create_retrieval_chain(retriever, document_chain)
         
         # The invoke method expects a dict with the 'input' key
-        agent_reply = rag_chain.invoke({"input": preview_result.content, "lang": language_code})
+        agent_reply = rag_chain.invoke({"input": preview_result_content, "lang": language_code})
         result = agent_reply.get('answer', 'No answer found').strip('`json')
         print(f"- INFO - agent.py _analyze_logs() - Complete Log analysis")
         # print(f"Log analysis result: {result}\n")
@@ -424,7 +529,7 @@ def _analyze_logs(
         )
 
 def _thread_safe_process(input:dict=None, language_code:str='' , log_src:str = '') -> bool:
-    '''
+    """
     Thread-safe function to process input data and launch QRT execution.
     Args:
         input (dict): The input data to process, expected to contain log analysis results.
@@ -432,7 +537,7 @@ def _thread_safe_process(input:dict=None, language_code:str='' , log_src:str = '
         log_src (str): The source of the logs, used for reporting purposes.
     Returns:
         True if processing was successful, False otherwise.
-    '''
+    """
     try:
         if input:
             import threading
@@ -465,7 +570,7 @@ def _launch_qrt(
         log_src: str = '',
         md_content: str = ''
         ) -> None:
-    '''
+    """
     Launch the Quick Response Team (QRT) execution based on the provided condition.
     Args:
         condition (str): The condition to analyze and execute the QRT response.
@@ -476,7 +581,7 @@ def _launch_qrt(
         md_content (str): The full report made by analysis function.
     Returns:
         None
-    '''
+    """
     try:
         print(f"- INFO - agent.py _launch_qrt() - Starting QRT execution...")
         

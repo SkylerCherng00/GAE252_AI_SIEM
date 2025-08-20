@@ -13,18 +13,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code
 COPY . .
 
-# Timezone, Language
-# PYTHONUNBUFFERED = 1 let print in python output immediately
-ENV TZ=Asia/Taipei \
-    LANG=C.UTF-8 \
-    PYTHONUNBUFFERED=1
-
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
-    echo $TZ > /etc/timezone && \
-    apt update && \
-    apt install -y python3-pip tzdata && \
-    dpkg-reconfigure -f noninteractive tzdata
-
 # Expose port (change if your app uses a different port)
 EXPOSE 10001
 

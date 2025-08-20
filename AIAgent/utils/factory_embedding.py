@@ -1,7 +1,7 @@
 import requests
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
-from .endpoint import endpoint_url, get_timestamp
+from .endpoint import endpoint_url
 
 # HTTP Endpoint
 CONFIG_EMBED_URL = endpoint_url + "config_embed"
@@ -31,7 +31,7 @@ class OllamaEmbedding(EmbeddingModel):
                 model=self.current_model
             )
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py OllamaEmbedding._initialize_embeddings() - Error initializing Ollama embeddings: {str(e)}")
+            print(f"- ERROR - factory_embedding.py OllamaEmbedding._initialize_embeddings() - Error initializing Ollama embeddings: {str(e)}")
             self._embeddings = None
     
     def get_model(self, **kwargs):
@@ -51,12 +51,12 @@ class OllamaEmbedding(EmbeddingModel):
             embeddings = self.get_model()
             
             if not embeddings:
-                print(f"{get_timestamp()} - ERROR - factory_embedding.py OllamaEmbedding.embed_query() - Failed to initialize Ollama embeddings")
+                print(f"- ERROR - factory_embedding.py OllamaEmbedding.embed_query() - Failed to initialize Ollama embeddings")
                 return []
                 
             return embeddings.embed_query(text)
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py OllamaEmbedding.embed_query() - Error generating embeddings from Ollama: {str(e)}")
+            print(f"- ERROR - factory_embedding.py OllamaEmbedding.embed_query() - Error generating embeddings from Ollama: {str(e)}")
             return []
     
     def embed_documents(self, documents: List[str]) -> List[List[float]]:
@@ -65,12 +65,12 @@ class OllamaEmbedding(EmbeddingModel):
             embeddings = self.get_model()
             
             if not embeddings:
-                print(f"{get_timestamp()} - ERROR - factory_embedding.py OllamaEmbedding.embed_documents() - Failed to initialize Ollama embeddings")
+                print(f"- ERROR - factory_embedding.py OllamaEmbedding.embed_documents() - Failed to initialize Ollama embeddings")
                 return []
                 
             return embeddings.embed_documents(documents)
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py OllamaEmbedding.embed_documents() - Error generating document embeddings from Ollama: {str(e)}")
+            print(f"- ERROR - factory_embedding.py OllamaEmbedding.embed_documents() - Error generating document embeddings from Ollama: {str(e)}")
             return []
             
     def is_available(self) -> bool:
@@ -103,7 +103,7 @@ class AzureOpenAIEmbedding(EmbeddingModel):
                 api_key=self.api_key
             )
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py AzureOpenAIEmbedding._initialize_embeddings() - Error initializing Azure OpenAI embeddings: {str(e)}")
+            print(f"- ERROR - factory_embedding.py AzureOpenAIEmbedding._initialize_embeddings() - Error initializing Azure OpenAI embeddings: {str(e)}")
             self._embeddings = None
     
     def get_model(self, **kwargs):
@@ -123,12 +123,12 @@ class AzureOpenAIEmbedding(EmbeddingModel):
             embeddings = self.get_model()
             
             if not embeddings:
-                print(f"{get_timestamp()} - ERROR - factory_embedding.py AzureOpenAIEmbedding.embed_query() - Failed to initialize Azure OpenAI embeddings")
+                print(f"- ERROR - factory_embedding.py AzureOpenAIEmbedding.embed_query() - Failed to initialize Azure OpenAI embeddings")
                 return []
                 
             return embeddings.embed_query(text)
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py AzureOpenAIEmbedding.embed_query() - Error generating embeddings from Azure OpenAI: {str(e)}")
+            print(f"- ERROR - factory_embedding.py AzureOpenAIEmbedding.embed_query() - Error generating embeddings from Azure OpenAI: {str(e)}")
             return []
     
     def embed_documents(self, documents: List[str]) -> List[List[float]]:
@@ -137,12 +137,12 @@ class AzureOpenAIEmbedding(EmbeddingModel):
             embeddings = self.get_model()
             
             if not embeddings:
-                print(f"{get_timestamp()} - ERROR - factory_embedding.py AzureOpenAIEmbedding.embed_documents() - Failed to initialize Azure OpenAI embeddings")
+                print(f"- ERROR - factory_embedding.py AzureOpenAIEmbedding.embed_documents() - Failed to initialize Azure OpenAI embeddings")
                 return []
                 
             return embeddings.embed_documents(documents)
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py AzureOpenAIEmbedding.embed_documents() - Error generating document embeddings from Azure OpenAI: {str(e)}")
+            print(f"- ERROR - factory_embedding.py AzureOpenAIEmbedding.embed_documents() - Error generating document embeddings from Azure OpenAI: {str(e)}")
             return []
             
     def is_available(self) -> bool:
@@ -171,7 +171,7 @@ class GeminiEmbedding(EmbeddingModel):
                 output_dimensionality=self.output_dimensionality
             )
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py GeminiEmbedding._initialize_embeddings() - Error initializing Gemini embeddings: {str(e)}")
+            print(f"- ERROR - factory_embedding.py GeminiEmbedding._initialize_embeddings() - Error initializing Gemini embeddings: {str(e)}")
             self._embeddings = None
     
     def get_model(self, **kwargs):
@@ -191,12 +191,12 @@ class GeminiEmbedding(EmbeddingModel):
             embeddings = self.get_model()
             
             if not embeddings:
-                print(f"{get_timestamp()} - ERROR - factory_embedding.py GeminiEmbedding.embed_query() - Failed to initialize Gemini embeddings")
+                print(f"- ERROR - factory_embedding.py GeminiEmbedding.embed_query() - Failed to initialize Gemini embeddings")
                 return []
                 
             return embeddings.embed_query(text)
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py GeminiEmbedding.embed_query() - Error generating embeddings from Gemini: {str(e)}")
+            print(f"- ERROR - factory_embedding.py GeminiEmbedding.embed_query() - Error generating embeddings from Gemini: {str(e)}")
             return []
     
     def embed_documents(self, documents: List[str]) -> List[List[float]]:
@@ -205,12 +205,12 @@ class GeminiEmbedding(EmbeddingModel):
             embeddings = self.get_model()
             
             if not embeddings:
-                print(f"{get_timestamp()} - ERROR - factory_embedding.py GeminiEmbedding.embed_documents() - Failed to initialize Gemini embeddings")
+                print(f"- ERROR - factory_embedding.py GeminiEmbedding.embed_documents() - Failed to initialize Gemini embeddings")
                 return []
                 
             return embeddings.embed_documents(documents)
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py GeminiEmbedding.embed_documents() - Error generating document embeddings from Gemini: {str(e)}")
+            print(f"- ERROR - factory_embedding.py GeminiEmbedding.embed_documents() - Error generating document embeddings from Gemini: {str(e)}")
             return []
     
     def is_available(self) -> bool:
@@ -243,13 +243,13 @@ class EmbeddingModelFactory:
             response = requests.get(CONFIG_EMBED_URL, timeout=5)
             if response.status_code == 200:
                 self.config = response.json().get('configs')
-                print(f"{get_timestamp()} - INFO - factory_embedding.py EmbeddingModelFactory.__init__() - Configuration loaded from API: {CONFIG_EMBED_URL}")
+                print(f"- INFO - factory_embedding.py EmbeddingModelFactory.__init__() - Configuration loaded from API: {CONFIG_EMBED_URL}")
                 
             else:
-                print(f"{get_timestamp()} - ERROR - factory_embedding.py EmbeddingModelFactory.__init__() - Failed to fetch configuration from API: {response.status_code}")
+                print(f"- ERROR - factory_embedding.py EmbeddingModelFactory.__init__() - Failed to fetch configuration from API: {response.status_code}")
                 self.config = {}
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - factory_embedding.py EmbeddingModelFactory.__init__() - Error fetching configuration from API: {e}")
+            print(f"- ERROR - factory_embedding.py EmbeddingModelFactory.__init__() - Error fetching configuration from API: {e}")
             self.config = {}
 
         # Default embedding model to use if available
@@ -351,11 +351,11 @@ if __name__ == "__main__":
     embedding_model = factory.create_embedding_model()
     
     if embedding_model is None:
-        print(f"{get_timestamp()} - ERROR - factory_embedding.py __main__ - No embedding model could be created. Please check your configuration.")
-        print(f"{get_timestamp()} - INFO - factory_embedding.py __main__ - Make sure at least one embedding service is properly configured and available.")
+        print(f"- ERROR - factory_embedding.py __main__ - No embedding model could be created. Please check your configuration.")
+        print(f"- INFO - factory_embedding.py __main__ - Make sure at least one embedding service is properly configured and available.")
         # Try each provider explicitly
         for provider in ['azure', 'gemini', 'ollama']:
-            print(f"{get_timestamp()} - INFO - factory_embedding.py __main__ - Trying to create {provider} embedding model...")
+            print(f"- INFO - factory_embedding.py __main__ - Trying to create {provider} embedding model...")
             embedding_model = factory.create_embedding_model(provider)
             if embedding_model is not None:
                 break
@@ -363,12 +363,12 @@ if __name__ == "__main__":
     if embedding_model is not None:
         # Get the underlying model object
         model = embedding_model.get_model()
-        print(f"{get_timestamp()} - INFO - factory_embedding.py __main__ - Embedding model type: {type(model).__name__}")
+        print(f"- INFO - factory_embedding.py __main__ - Embedding model type: {type(model).__name__}")
 
         # Example usage for a single query
         query_text = "This is a test query for embeddings"
         query_embedding = embedding_model.embed_query(query_text)
-        print(f"{get_timestamp()} - INFO - factory_embedding.py __main__ - Query embedding dimensions: {len(query_embedding) if query_embedding else 0}")
+        print(f"- INFO - factory_embedding.py __main__ - Query embedding dimensions: {len(query_embedding) if query_embedding else 0}")
         
         # Example usage for multiple documents
         documents = [
@@ -377,8 +377,8 @@ if __name__ == "__main__":
             "This is the third document"
         ]
         doc_embeddings = embedding_model.embed_documents(documents)
-        print(f"{get_timestamp()} - INFO - factory_embedding.py __main__ - Number of document embeddings: {len(doc_embeddings) if doc_embeddings else 0}")
+        print(f"- INFO - factory_embedding.py __main__ - Number of document embeddings: {len(doc_embeddings) if doc_embeddings else 0}")
         if doc_embeddings and len(doc_embeddings) > 0:
-            print(f"{get_timestamp()} - INFO - factory_embedding.py __main__ - Dimensions of first document embedding: {len(doc_embeddings[0])}")
+            print(f"- INFO - factory_embedding.py __main__ - Dimensions of first document embedding: {len(doc_embeddings[0])}")
     else:
-        print(f"{get_timestamp()} - ERROR - factory_embedding.py __main__ - Error: No embedding model is available. Please check your configuration and ensure at least one service is running.")
+        print(f"- ERROR - factory_embedding.py __main__ - Error: No embedding model is available. Please check your configuration and ensure at least one service is running.")

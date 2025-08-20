@@ -1,7 +1,7 @@
 import pymongo
 import requests
 from typing import Dict, List, Any, Union
-from .endpoint import endpoint_url, get_timestamp
+from .endpoint import endpoint_url
 
 # HTTP Endpoint
 CONFIG_FACTORY_URL = endpoint_url + "config_mongodb"
@@ -39,24 +39,24 @@ class MongoDBHandler:
             response = requests.get(CONFIG_FACTORY_URL, timeout=5)
             if response.status_code == 200:
                 self.config = response.json().get('configs')
-                print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.__init__() - Configuration loaded from API: {CONFIG_FACTORY_URL}")
+                print(f"- INFO - util_mongodb.py MongoDBHandler.__init__() - Configuration loaded from API: {CONFIG_FACTORY_URL}")
                 
             else:
-                print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.__init__() - Failed to fetch configuration from API: {response.status_code}")
+                print(f"- ERROR - util_mongodb.py MongoDBHandler.__init__() - Failed to fetch configuration from API: {response.status_code}")
             connection_string = self.config.get('Mongodb', '').get('connection_string', '')
             self.client = pymongo.MongoClient(connection_string)
             self.db = self.client[db_name]
             self.client.server_info()
-            print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.__init__() - Successfully connected to MongoDB: {db_name}")
+            print(f"- INFO - util_mongodb.py MongoDBHandler.__init__() - Successfully connected to MongoDB: {db_name}")
             
         except pymongo.errors.ServerSelectionTimeoutError as e:
-            print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.__init__() - Failed to connect to MongoDB: {e}")
+            print(f"- ERROR - util_mongodb.py MongoDBHandler.__init__() - Failed to connect to MongoDB: {e}")
             raise
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.__init__() - An error occurred while connecting to MongoDB: {e}")
+            print(f"- ERROR - util_mongodb.py MongoDBHandler.__init__() - An error occurred while connecting to MongoDB: {e}")
             raise
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.__init__() - Error occurred while initialization: {e}")
+            print(f"- ERROR - util_mongodb.py MongoDBHandler.__init__() - Error occurred while initialization: {e}")
             raise
         finally:
             self._initialized = True
@@ -74,15 +74,15 @@ class MongoDBHandler:
         try:
             # Check if collection already exists
             if collection_name in self.db.list_collection_names():
-                print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.create_collection() - Collection '{collection_name}' already exists")
+                print(f"- INFO - util_mongodb.py MongoDBHandler.create_collection() - Collection '{collection_name}' already exists")
                 return True
             
             # Create collection
             self.db.create_collection(collection_name)
-            print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.create_collection() - Collection '{collection_name}' created successfully")
+            print(f"- INFO - util_mongodb.py MongoDBHandler.create_collection() - Collection '{collection_name}' created successfully")
             return True
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.create_collection() - Failed to create collection '{collection_name}': {e}")
+            print(f"- ERROR - util_mongodb.py MongoDBHandler.create_collection() - Failed to create collection '{collection_name}': {e}")
             return False
     
     def insert_data(self, collection_name: str, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> bool:
@@ -102,17 +102,17 @@ class MongoDBHandler:
             # Handle single document or multiple documents
             if isinstance(data, dict):
                 result = collection.insert_one(data)
-                print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.insert_data() - Document inserted with ID: {result.inserted_id}")
+                print(f"- INFO - util_mongodb.py MongoDBHandler.insert_data() - Document inserted with ID: {result.inserted_id}")
             elif isinstance(data, list):
                 result = collection.insert_many(data)
-                print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.insert_data() - Inserted {len(result.inserted_ids)} documents")
+                print(f"- INFO - util_mongodb.py MongoDBHandler.insert_data() - Inserted {len(result.inserted_ids)} documents")
             else:
-                print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.insert_data() - Data must be a dictionary or a list of dictionaries")
+                print(f"- ERROR - util_mongodb.py MongoDBHandler.insert_data() - Data must be a dictionary or a list of dictionaries")
                 return False
                 
             return True
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.insert_data() - Failed to insert data into '{collection_name}': {e}")
+            print(f"- ERROR - util_mongodb.py MongoDBHandler.insert_data() - Failed to insert data into '{collection_name}': {e}")
             return False
     
     def query_data(self, collection_name: str, query: Dict[str, Any] = None, 
@@ -151,10 +151,10 @@ class MongoDBHandler:
                 
             # Convert cursor to list
             result = list(cursor)
-            print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.query_data() - Query returned {len(result)} documents from '{collection_name}'")
+            print(f"- INFO - util_mongodb.py MongoDBHandler.query_data() - Query returned {len(result)} documents from '{collection_name}'")
             return result
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.query_data() - Failed to query data from '{collection_name}': {e}")
+            print(f"- ERROR - util_mongodb.py MongoDBHandler.query_data() - Failed to query data from '{collection_name}': {e}")
             return []
     
     def update_data(self, collection_name: str, query: Dict[str, Any], 
@@ -179,10 +179,10 @@ class MongoDBHandler:
                 update_data = {'$set': update_data}
             
             result = collection.update_many(query, update_data, upsert=upsert)
-            print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.update_data() - Updated {result.modified_count} documents in '{collection_name}'")
+            print(f"- INFO - util_mongodb.py MongoDBHandler.update_data() - Updated {result.modified_count} documents in '{collection_name}'")
             return True
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.update_data() - Failed to update data in '{collection_name}': {e}")
+            print(f"- ERROR - util_mongodb.py MongoDBHandler.update_data() - Failed to update data in '{collection_name}': {e}")
             return False
     
     def delete_data(self, collection_name: str, query: Dict[str, Any]) -> bool:
@@ -199,10 +199,10 @@ class MongoDBHandler:
         try:
             collection = self.db[collection_name]
             result = collection.delete_many(query)
-            print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.delete_data() - Deleted {result.deleted_count} documents from '{collection_name}'")
+            print(f"- INFO - util_mongodb.py MongoDBHandler.delete_data() - Deleted {result.deleted_count} documents from '{collection_name}'")
             return True
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.delete_data() - Failed to delete data from '{collection_name}': {e}")
+            print(f"- ERROR - util_mongodb.py MongoDBHandler.delete_data() - Failed to delete data from '{collection_name}': {e}")
             return False
     
     def close_connection(self) -> None:
@@ -211,9 +211,9 @@ class MongoDBHandler:
         """
         try:
             self.client.close()
-            print(f"{get_timestamp()} - INFO - util_mongodb.py MongoDBHandler.close_connection() - MongoDB connection closed")
+            print(f"- INFO - util_mongodb.py MongoDBHandler.close_connection() - MongoDB connection closed")
         except Exception as e:
-            print(f"{get_timestamp()} - ERROR - util_mongodb.py MongoDBHandler.close_connection() - Error closing MongoDB connection: {e}")
+            print(f"- ERROR - util_mongodb.py MongoDBHandler.close_connection() - Error closing MongoDB connection: {e}")
 
 def main():
     """
