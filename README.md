@@ -1,6 +1,5 @@
 # GAE252_AI_SIEM: AI-Powered Security Information and Event Management
 
-[![Build Status](https://img.shields.io/travis/com/your-username/your-repo.svg)](https://travis-ci.com/your-username/your-repo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 An AI-powered SIEM (Security Information and Event Management) system designed to proactively detect, analyze, and respond to cybersecurity threats. This project leverages Large Language Models (LLMs) to analyze logs, identify potential security incidents, and generate insightful reports.
@@ -23,7 +22,6 @@ In today's complex digital landscape, manually analyzing security logs is a daun
 ![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
 ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
 ![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
-![Docker Compose](https://img.shields.io/badge/docker--compose-%232496ed.svg?style=for-the-badge&logo=docker&logoColor=white)
 ![MongoDB](https://img.shields.io/badge/MongoDB-%234ea94b.svg?style=for-the-badge&logo=mongodb&logoColor=white)
 ![Qdrant](https://img.shields.io/badge/qdrant-%23E62F2B.svg?style=for-the-badge&logo=qdrant&logoColor=white)
 ![GCP](https://img.shields.io/badge/GCP-%234285F4.svg?style=for-the-badge&logo=google-cloud&logoColor=white)
@@ -72,8 +70,10 @@ These instructions will get you a copy of the project up and running on your loc
 ### Prerequisites
 
 *   [Docker](https://docs.docker.com/get-docker/)
-*   [Docker Compose](https://docs.docker.com/compose/install/)
-*   [Python 3.10+](https://www.python.org/downloads/)
+*   [Python 3.12](https://www.python.org/downloads/)
+*   [Qdrant](https://qdrant.tech/documentation/quickstart/)
+*   [MongoDB](https://www.mongodb.com/docs/manual/tutorial/install-mongodb-community-with-docker/)
+*   [Ollama](https://ollama.com/)
 
 ### Installation
 
