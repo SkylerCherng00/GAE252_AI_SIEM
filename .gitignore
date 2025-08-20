@@ -1,4 +1,6 @@
 **/__pycache__
 **/docs
 **/logs
+**/data
 *.ini
+service.yaml

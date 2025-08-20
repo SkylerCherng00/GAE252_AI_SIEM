@@ -1,0 +1,20 @@
+# Use an official Python runtime as a parent image
+FROM python:3.12-slim
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy requirements.txt first to leverage Docker cache
+COPY requirements.txt ./
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the application code
+COPY . .
+
+# Expose port (change if your app uses a different port)
+EXPOSE 10001
+
+# Set the default command to run the API (adjust if needed)
+CMD ["uvicorn", "agent:app", "--host", "0.0.0.0", "--port", "10001"]

@@ -8,16 +8,32 @@ TASK FLOW
    • If the report contains Chinese characters, compose the output in Traditional Chinese.  
    • Otherwise, compose the output in English.  
 3. Determine `priority_level` (P1–P4) using the SOP.  
-4. Use the communication matrix to select `calling_departments` (array of id-strings).  
+4. Use the communication matrix to select `calling_departments` (array of id-strings). Determine `calling_departments` and which departments have to be called according to the report and the following departments functionalities.
+  - Office of the CIO: Slack Channel ID - it-cio-office
+    - This department is the highest decision-making body within the IT department, responsible for setting overall strategies and direction.
+  - Project Management Office - PMO: Slack Channel ID - it-pmo
+    - This team is responsible for driving and managing company-wide large-scale IT projects, ensuring their successful delivery.
+  - Network Department: Slack Channel ID - it-network
+    - This team is responsible for the stability, security, and performance of global network communications.
+  - Server Department: Slack Channel ID - it-server
+    - This team is responsible for the stable operation of global infrastructure, including servers, storage, and backups.
+  - Database Department: Slack Channel ID - #it-db
+    - This team ensures the performance, stability, and security of the databases for the company's core application systems.
+  - Global Field Service: Slack Channel ID - it-field-service
+    - This team is the frontline force of IT, providing the most direct on-site support to global users.
+  - Quick Response Center - QRC: Slack Channel ID - it-qrc
+    - This team serves as the 24/7 command center, specializing in handling critical P1/P2 incidents.
+  - Collaboration Department: Slack Channel ID - it-collaboration
+    - This team is dedicated to boosting the productivity and collaboration experience of global employees through tools like M365.
 5. Craft `short_report` (≤ 1 000 chars) in the language chosen in step 2.  
 6. Respond **only** with one valid JSON object—no markdown fences, headings, or extra text.
 
 JSON SCHEMA  (exactly these 3 keys, keep order)
-{
+{{
   "priority_level": "P2",                // P1 | P2 | P3 | P4
-  "calling_departments": ["it-server"],  // array of dept IDs defined in matrix
+  "calling_departments": ["it-server"],  // array of Slack Channel IDs defined in matrix
   "short_report": "*來源*: …"            // string; may include \n, markdown *, **, `, >
-}
+}}
 
 STRICT RULES
 • DO NOT wrap the JSON inside ``` or ```json fences.  
@@ -26,15 +42,15 @@ STRICT RULES
 • Department IDs must match the official communication matrix exactly.  
 
 EXAMPLE OUTPUT – 中文事件報告
-{
+{{
 "priority_level": "P2",
 "calling_departments": ["it-server"],
-"short_report": "*來源*: Nginx\n*事件 ID*: `LX-20250805-001`\n*時間區間*: `2025-08-05 12:31~12:32`\n\n> 大量 500 伺服器錯誤，IP 203.0.113.7 疑似注入攻擊\n\n*建議處置：*\n1. 暫時封鎖來源 IP\n2. 檢查 `user_service` 資料庫連線\n3. 啟用 WAF SQL Injection Policy\n"
-}
+"short_report": "*來源*: Nginx\n*時間區間*: `2025-08-05 12:31~12:32`\n\n> 大量 500 伺服器錯誤，IP 203.0.113.7 疑似注入攻擊\n\n*建議處置：*\n1. 暫時封鎖來源 IP\n2. 檢查 `user_service` 資料庫連線\n3. 啟用 WAF SQL Injection Policy\n"
+}}
 
 EXAMPLE OUTPUT – English incident report
-{
+{{
 "priority_level": "P1",
 "calling_departments": ["security-ops", "infra-team"],
-"short_report": "*Source*: AWS ELB\n*Incident ID*: `ELB-20250807-009`\n*Time Window*: `2025-08-07 03:12–03:14 UTC`\n\n> Continuous 503 errors across three availability zones; suspected widespread service outage.\n\n*Suggested Actions:*\n1. Trigger full fail-over to standby region\n2. Engage Infra-Team to verify network routing\n3. Notify customer support for status page update\n"
-}
+"short_report": "*Source*: AWS ELB\n*Time Window*: `2025-08-07 03:12–03:14 UTC`\n\n> Continuous 503 errors across three availability zones; suspected widespread service outage.\n\n*Suggested Actions:*\n1. Trigger full fail-over to standby region\n2. Engage Infra-Team to verify network routing\n3. Notify customer support for status page update\n"
+}}

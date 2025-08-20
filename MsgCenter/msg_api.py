@@ -10,15 +10,17 @@ app = FastAPI(
     title="Message Center API",
     description="API for accessing configuration information for the AI SIEM system",
     version="1.0.0",
+    docs_url=None
 )
 
 # Add CORS middleware to allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["http://localhost:10001", "http://agent:10001",
+                   "http://localhost:10002", "http://rpa:10002"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["GET"],
+    allow_headers=["*"], 
 )
 
 # Define paths to configuration files
@@ -233,7 +235,6 @@ async def get_config_rpa():
     """
     try:
         config = _load_config(CONFIG_RAP_PATH)
-        print(config)
         return {
             "filename": "config_rap.ini",
             "configs": _config_to_dict(config)
