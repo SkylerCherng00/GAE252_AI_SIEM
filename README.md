@@ -34,26 +34,18 @@ The system is composed of several microservices that work together to provide a 
 ```mermaid
 graph TD
     subgraph "Data & Storage"
-        A[Log Files] --> B{AIAgent};
         B --> C[Qdrant Vector DB];
         B --> D[MongoDB];
     end
 
     subgraph "Core Services"
         B -- Analyzes --> A;
-        B -- Stores Embeddings --> C;
-        B -- Stores Reports --> D;
-        E[MsgCenter] -- Sends Notifications --> F[Slack];
         B -- Triggers --> G[RPA];
-        G -- Interacts with --> E;
+        G -- Interacts with -->D;
     end
 
-    subgraph "Integrations"
-        F;
-    end
-
-    subgraph "User Interface"
-        H[Web Interface] -- Interacts with --> B;
+    subgraph "Log Collector"
+        H[Logs] -- Push Log to --> B;
     end
 ```
 
