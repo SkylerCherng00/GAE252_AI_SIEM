@@ -13,7 +13,7 @@ In today's complex digital landscape, manually analyzing security logs is a daun
 *   **AI-Powered Threat Detection:** Utilizes LLMs to analyze logs and identify suspicious activities.
 *   **Automated Reporting:** Generates detailed and easy-to-understand reports for security incidents.
 *   **Multi-Component Architecture:** A modular and scalable system with components for AI analysis, messaging, and data storage.
-*   **Cloud-Ready Deployment:** Includes deployment configurations for Azure and GCP.
+*   **Cloud-Ready Deployment:** Includes deployment configurations for GCP.
 *   **Containerized:** Uses Docker and Docker Compose for easy setup and deployment.
 *   **Extensible:** Designed to be easily extended with new detection capabilities and integrations.
 
