@@ -31,22 +31,7 @@ In today's complex digital landscape, manually analyzing security logs is a daun
 
 The system is composed of several microservices that work together to provide a comprehensive security solution.
 
-```mermaid
-graph TD
-    subgraph "RAG & Data Storage"
-        B --> C[Qdrant Vector DB];
-        B --> D[MongoDB];
-    end
-
-    subgraph "Core Services"
-        B[AI Agent] -- Analyzes --> E;
-        F -- Triggers --> G[RPA];
-    end
-
-    subgraph "Log Collector"
-        H[Logs] -- Push Log to --> B;
-    end
-```
+...
 
 *   **AIAgent:** The core component that analyzes logs, generates reports, and interacts with other services.
 *   **MsgCenter:** Handles messaging and notifications.
