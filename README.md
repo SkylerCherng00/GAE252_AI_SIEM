@@ -104,7 +104,7 @@ The `StartupDeploy.py` script provides a convenient way to deploy the applicatio
 
 Once the services are running, you can start analyzing logs.
 
-**Use the API:** The AIAgent exposes an API for programmatic access. You can explore the API endpoints using the Swagger UI at `http://localhost:8000/docs`.
+**Use the API:** The AIAgent exposes an API for programmatic access. You can explore the API endpoints using the Swagger UI at `http://localhost:10001/docs`.
 
 ## 🤝 Contributing
 
