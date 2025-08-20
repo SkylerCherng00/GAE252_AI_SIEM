@@ -82,7 +82,7 @@ The `StartupDeploy.py` script provides a convenient way to deploy the applicatio
 2.  Choose option `a` for a local test environment or `b` for a Docker on-premise deployment.
 3.  The script will configure the endpoints and start the services.
 
-### Cloud Deployment (GCP & Azure)
+### Cloud Deployment (GCP)
 
 1.  **Prerequisites:**
     *   Install [Google Cloud SDK](https://cloud.google.com/sdk/docs/install).
