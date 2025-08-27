@@ -53,7 +53,7 @@ GAE252_AI_SIEM transforms traditional security monitoring by combining AI-driven
 ```
                         ┌─────────────────┐
                         │   MsgCenter     │
-                        │  (Messaging)    │
+                        │(Store Crdential)│
                         └─────────────────┘
                                  ▲
                                  │
@@ -110,7 +110,7 @@ GAE252_AI_SIEM transforms traditional security monitoring by combining AI-driven
 ### Core Components
 
 - **AIAgent** (`AIAgent/`): FastAPI-based analysis engine that processes logs using LLMs and generates security reports
-- **MsgCenter** (`MsgCenter/`): Central communication hub managing inter-service messaging and alert routing
+- **MsgCenter** (`MsgCenter/`): Centralize and manage credentials and configurations
 - **Qdrant** (`Qrant/`): Vector database storing document embeddings for semantic log search and contextual analysis
 - **RPA** (`Rpa/`): Robotic Process Automation for automated responses and team notifications
 - **MongoDB**: Document storage for security reports, incident history, and audit trails
@@ -135,6 +135,7 @@ GAE252_AI_SIEM transforms traditional security monitoring by combining AI-driven
 - [MongoDB](https://www.mongodb.com/) (Document storage)
 
 ### Installation
+0. **Create Virtual Environment and Activate**
 
 1. **Clone the Repository**
    ```bash
@@ -154,6 +155,9 @@ GAE252_AI_SIEM transforms traditional security monitoring by combining AI-driven
 
 3. **Initialize Vector Database**
    ```bash
+   # Install packages
+   pip install -r ./Qdrant/requirement.txt
+   
    # Place your security documentation in Qrant/src/
    cp your-security-docs/* Qrant/src/
    
@@ -288,7 +292,7 @@ GAE252_AI_SIEM/
 │       ├── util_mongodb.py    # MongoDB operations
 │       └── endpoint.py        # API endpoint configurations
 ├── MsgCenter/                  # Messaging service
-│   └── msg_api.py             # Message routing and handling
+│   └── msg_api.py             # Store credential and configurations
 ├── Qrant/                      # Vector database service
 │   ├── qdrant_api.py          # Qdrant API interface
 │   ├── qdrant_embed.py        # Document embedding processor
