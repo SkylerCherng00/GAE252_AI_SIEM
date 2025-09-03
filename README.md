@@ -12,14 +12,14 @@ An intelligent AI-powered SIEM (Security Information and Event Management) syste
 
 ## Contributors
 ### Github
-- [Itsuki](https://github.com/otoitsuki)
-- [Vincent](https://github.com/Asia1o1)
-- [Skyler](https://github.com/SkylerCherng00)
+- [Itsuki Lin](https://github.com/otoitsuki)
+- [Vincent Hsu](https://github.com/Asia1o1)
+- [Skyler Cherng](https://github.com/SkylerCherng00)
 
 ### LinkedIn
-- [Itsuki](https://www.linkedin.com/in/itsuki)
-- [Vincent](https://www.linkedin.com/in/hsuliwei)
-- [Skyler](https://www.linkedin.com/in/shih-sung-cheng-675456369)
+- [Itsuki Lin](https://www.linkedin.com/in/itsuki)
+- [Vincent Hsu](https://www.linkedin.com/in/hsuliwei)
+- [Skyler Cherng](https://www.linkedin.com/in/shih-sung-cheng-675456369)
 
 ## 🚀 Overview
 
