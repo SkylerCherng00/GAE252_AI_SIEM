@@ -11,7 +11,7 @@ An intelligent AI-powered SIEM (Security Information and Event Management) syste
 - Slide: [On Call 終結者 簡報](https://www.canva.com/design/DAGw3dHdKKM/zjJBFuog991dZgTHc7nT8w/edit?utm_content=DAGw3dHdKKM&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton)
 
 ## Contributors
-### Github
+### GitHub
 - [Itsuki Lin](https://github.com/otoitsuki)
 - [Vincent Hsu](https://github.com/Asia1o1)
 - [Skyler Cherng](https://github.com/SkylerCherng00)
