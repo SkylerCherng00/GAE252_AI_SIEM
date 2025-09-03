@@ -10,6 +10,17 @@ An intelligent AI-powered SIEM (Security Information and Event Management) syste
 - Vedio (including Live demo): [團體專題 On Call 終結者](https://youtu.be/X1QKTmAFCmw)
 - Slide: [On Call 終結者 簡報](https://www.canva.com/design/DAGw3dHdKKM/zjJBFuog991dZgTHc7nT8w/edit?utm_content=DAGw3dHdKKM&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton)
 
+## Contributors
+### Github
+- [Itsuki](https://github.com/otoitsuki)
+- [Vincent](https://github.com/Asia1o1)
+- [Skyler](https://github.com/SkylerCherng00)
+
+### LinkedIn
+- [Itsuki](https://www.linkedin.com/in/itsuki)
+- [Vincent](https://www.linkedin.com/in/hsuliwei)
+- [Skyler](https://www.linkedin.com/in/shih-sung-cheng-675456369)
+
 ## 🚀 Overview
 
 GAE252_AI_SIEM transforms traditional security monitoring by combining AI-driven analysis with modern microservices architecture. The system intelligently processes security logs from various sources, identifies potential threats using MITRE ATT&CK and OWASP frameworks, and generates detailed security reports. With support for multiple LLM providers and automated response capabilities, it provides comprehensive security coverage for modern infrastructure.
